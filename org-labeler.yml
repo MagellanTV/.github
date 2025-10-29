@@ -1,0 +1,43 @@
+Documentation:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'docs/**' 
+      - 'guides/**'
+      - '**/*.md'
+
+source:
+  - all:
+    - changed-files:
+      - any-glob-to-any-file: 'src/**/*'
+      - all-globs-to-all-files: '!src/docs/*'
+
+# Etiquetas por branch pattern (feature/fix/hotfix)
+feature:
+  - head-branch: ['^feature', 'feature']
+
+fix:
+  - head-branch: ['^fix', 'fix', '^hotfix', 'hotfix']
+
+dependencies:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'package.json'
+      - 'package-lock.json'
+      - 'build.gradle'
+      - 'Podfile'
+      - 'composer.json'
+      - 'requirements.txt'
+
+tests:
+  - changed-files:
+    - any-glob-to-any-file:
+      - '**/*.test.js'
+      - '**/*.spec.js'
+      - '**/*.test.ts'
+      - '**/*.spec.ts'
+      - '**/tests/**/*'
+      - '**/__tests__/**/*'
+
+# Release cuando se hace PR a main
+release:
+  - base-branch: 'main'

@@ -1,0 +1,25 @@
+projects:
+  magellantv-web:
+    teams: 
+      - web-team
+      - tech-leads
+      - test-team
+    description: "Website"
+  
+  magellantv-android:
+    teams: 
+      - android-team
+      - tech-leads
+      - test-team
+    description: "Android App"
+
+  magellantv_roku:
+    teams: 
+      - roku-team
+      - test-team
+    description: "Roku App"
+  
+  default:
+    teams: 
+      - tech-leads
+    description: "Default Reviewers"
