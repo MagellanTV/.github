@@ -49,7 +49,10 @@ jobs:
           with open('$MAPPING_FILE', 'r') as f:
               mapping = yaml.safe_load(f)
           
-          project = mapping.get('$PROJECT_NAME')
+          # Get projects dict first
+          projects = mapping.get('projects', {})
+          project = projects.get('$PROJECT_NAME')
+          
           if not project:
               print(f"No configuration found for: $PROJECT_NAME")
               exit(1)
@@ -89,7 +92,7 @@ jobs:
           requirements-file: /tmp/required-reviews-temp.yml
           status: Required reviews
           fail: true
-          request-reviews: false
+          request-reviews: false  # ← CHANGED: No solicitamos revisión de equipos aquí
       
       # 5. NEW: Request reviews from individual team members
       - name: Request reviews from team members
@@ -99,7 +102,7 @@ jobs:
           TEAMS: ${{ steps.load-mapping.outputs.teams }}
           REVIEWERS_PER_TEAM: ${{ inputs.reviewers-per-team }}
         with:
-          github-token: ${{ secrets.TOKEN }}  # Necesita read:org scope
+          github-token: ${{ secrets.TOKEN }} 
           script: |
             const teams = JSON.parse(process.env.TEAMS);
             const reviewersPerTeam = parseInt(process.env.REVIEWERS_PER_TEAM);
