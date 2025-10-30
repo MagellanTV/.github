@@ -19,6 +19,24 @@ projects:
       - test-team
     description: "Roku App"
   
+  magellantv-smarttv:
+    teams:
+      - smarttv-team
+      - test-team
+    description: "Smart TV App"
+  
+  magellantv-appletv:
+    teams:
+      - apple-team
+      - test-team
+    description: "Apple TV App"
+  
+  magellantv-backend:
+    teams:
+      - backend-team
+      - tech-leads
+    description: "Backend Services"
+  
   default:
     teams: 
       - tech-leads

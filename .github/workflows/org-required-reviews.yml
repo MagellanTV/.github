@@ -117,7 +117,7 @@ jobs:
             teams:
           EOF
           
-          # Add each team
+          # Add each team (estos son los team slugs reales de GitHub ahora)
           echo "$TEAMS" | jq -r '.[]' | while read team; do
             echo "      - $team" >> /tmp/required-reviews-temp.yml
           done
@@ -129,6 +129,7 @@ jobs:
           echo "════════════════════════════════════════════════════════════"
       
       - name: Run required review check
+        id: review-check
         uses: Automattic/action-required-review@v3
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -148,7 +149,7 @@ jobs:
             const teamsJson = '${{ steps.load-mapping.outputs.teams }}';
             const teams = JSON.parse(teamsJson);
             
-            const teamList = teams.map(team => `- \`${team}\``).join('\n');
+            const teamList = teams.map(team => `- @MagellanTV/${team}`).join('\n');
             
             const comment = `
             ## ⚠️ Required Reviews Pending
@@ -157,7 +158,7 @@ jobs:
             **Description:** ${description}  
             
             ### Required Teams
-            This PR requires approval from **ALL** of the following teams:
+            This PR requires approval from **at least one member** of each of the following teams:
             
             ${teamList}
             
@@ -204,5 +205,5 @@ jobs:
           echo "✅ ALL REQUIRED REVIEWS COMPLETED"
           echo "════════════════════════════════════════════════════════════"
           echo "Project: ${{ inputs.project-name }}"
-          echo "All teams have approved this PR"
+          echo "All required teams have approved this PR"
           echo "════════════════════════════════════════════════════════════"
