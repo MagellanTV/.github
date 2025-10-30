@@ -130,13 +130,11 @@ jobs:
       
       - name: Run required review check
         uses: Automattic/action-required-review@v3
-        id: review-check
         with:
-          requirements: 'requirements'  # o el nombre de tu archivo
-          requirements-file: '.github/workflows/org-reviews-teams.yml'
-          team-mapping-file: '.github/workflows/org-team-mapping.yml'  
           token: ${{ secrets.GITHUB_TOKEN }}
-          status: "Required reviews - ${{ inputs.project-name }}"
+          requirements-file: '.github-org/org-team-mapping.yml'
+          virtual-teams-file: '.github-org/org-reviews-teams.yml'
+          status: 'Required reviews'
           fail: true
           request-reviews: true
       
