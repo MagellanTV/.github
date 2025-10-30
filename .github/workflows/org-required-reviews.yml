@@ -132,7 +132,7 @@ jobs:
         id: review-check
         uses: Automattic/action-required-review@v3
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.REQUIRED_REVIEWS_TOKEN }}
           requirements-file: '/tmp/required-reviews-temp.yml'
           status: 'Required reviews'
           fail: true
