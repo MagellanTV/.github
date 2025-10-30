@@ -1,206 +1,168 @@
-name: Required Reviews Enforcement
+name: Required Reviewers
 
 on:
   workflow_call:
     inputs:
       project-name:
+        description: 'Project identifier for team mapping'
         required: true
         type: string
-        description: "Name of the project/repository"
+      reviewers-per-team:
+        description: 'Number of reviewers to request from each team (default: 1)'
+        required: false
+        type: number
+        default: 1
     secrets:
-      token:
+      TOKEN:
+        description: 'GitHub token with read:org scope'
         required: true
-        description: "GitHub token for API access"
-
-permissions:
-  contents: read
-  pull-requests: write
 
 jobs:
   check-required-reviews:
     name: Check required reviews for ${{ inputs.project-name }}
     runs-on: ubuntu-latest
-    
+    permissions:
+      contents: read
+      pull-requests: write
+      
     steps:
-      - name: Checkout organization .github repository
+      # 1. Checkout .github repo to get mapping
+      - name: Checkout organization .github repo
         uses: actions/checkout@v4
         with:
           repository: MagellanTV/.github
           path: .github-org
-          token: ${{ secrets.token }}
+          token: ${{ secrets.TOKEN }}
       
-      - name: Display PR information
-        run: |
-          echo "════════════════════════════════════════════════════════════"
-          echo "📋 PULL REQUEST INFORMATION"
-          echo "════════════════════════════════════════════════════════════"
-          echo "Repository: ${{ github.repository }}"
-          echo "Project Name: ${{ inputs.project-name }}"
-          echo "PR Number: #${{ github.event.pull_request.number }}"
-          echo "Author: ${{ github.event.pull_request.user.login }}"
-          echo "Branch: ${{ github.head_ref }} → ${{ github.base_ref }}"
-          echo "════════════════════════════════════════════════════════════"
-      
+      # 2. Load and parse project-team mapping
       - name: Load project-team mapping
         id: load-mapping
         run: |
           PROJECT_NAME="${{ inputs.project-name }}"
           MAPPING_FILE=".github-org/org-team-mapping.yml"
           
-          echo "════════════════════════════════════════════════════════════"
-          echo "🔍 LOADING PROJECT-TEAM MAPPING"
-          echo "════════════════════════════════════════════════════════════"
-          echo "Project detected: $PROJECT_NAME"
-          echo "Mapping file: $MAPPING_FILE"
-          
-          # Check if mapping file exists
-          if [ ! -f "$MAPPING_FILE" ]; then
-            echo "❌ ERROR: Mapping file not found!"
-            exit 1
-          fi
-          
-          # Extract teams using Python
-          python3 << 'PYTHON_EOF'
+          python3 << PYTHON_EOF
           import yaml
-          import sys
-          import os
           import json
+          import os
           
-          project_name = "${{ inputs.project-name }}"
-          
-          # Read mapping file
-          with open('.github-org/org-team-mapping.yml', 'r') as f:
+          with open('$MAPPING_FILE', 'r') as f:
               mapping = yaml.safe_load(f)
           
-          # Find project configuration
-          if project_name in mapping['projects']:
-              config = mapping['projects'][project_name]
-              print(f"✅ Configuration found for: {project_name}")
-          else:
-              config = mapping['projects']['default']
-              print(f"⚠️  No specific configuration found")
-              print(f"ℹ️  Using default configuration")
+          project = mapping.get('$PROJECT_NAME')
+          if not project:
+              print(f"No configuration found for: $PROJECT_NAME")
+              exit(1)
           
-          teams = config['teams']
-          description = config['description']
+          teams = project.get('teams', [])
+          description = project.get('description', 'No description')
           
-          print(f"📋 Description: {description}")
-          print(f"👥 Required teams ({len(teams)}):")
-          for team in teams:
-              print(f"   - {team}")
+          print(f"Required teams: {', '.join(teams)}")
           
-          # Write to GITHUB_OUTPUT
           with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
               f.write(f"teams={json.dumps(teams)}\n")
               f.write(f"description={description}\n")
               f.write(f"teams_count={len(teams)}\n")
           
           PYTHON_EOF
-          
-          echo "════════════════════════════════════════════════════════════"
       
-      - name: Create temporary requirements configuration
+      # 3. Create requirements file for action-required-review
+      - name: Create requirements configuration
+        env:
+          TEAMS: ${{ steps.load-mapping.outputs.teams }}
         run: |
-          TEAMS='${{ steps.load-mapping.outputs.teams }}'
-          
-          echo "════════════════════════════════════════════════════════════"
-          echo "📝 CREATING REQUIREMENTS CONFIGURATION"
-          echo "════════════════════════════════════════════════════════════"
-          
-          # Start YAML file
           cat > /tmp/required-reviews-temp.yml <<EOF
           - name: Required reviews for ${{ inputs.project-name }}
             paths: unmatched
             teams:
           EOF
           
-          # Add each team (estos son los team slugs reales de GitHub ahora)
           echo "$TEAMS" | jq -r '.[]' | while read team; do
             echo "      - $team" >> /tmp/required-reviews-temp.yml
           done
-          
-          echo "✅ Configuration file created"
-          echo ""
-          echo "Content:"
-          cat /tmp/required-reviews-temp.yml
-          echo "════════════════════════════════════════════════════════════"
       
-      - name: Run required review check
-        id: review-check
+      # 4. Check requirements (but don't request reviews from teams)
+      - name: Check review requirements
         uses: Automattic/action-required-review@v3
         with:
-          token: ${{ secrets.token }} 
-          requirements-file: '/tmp/required-reviews-temp.yml'
-          status: 'Required reviews'
+          token: ${{ secrets.TOKEN }}
+          requirements-file: /tmp/required-reviews-temp.yml
+          status: Required reviews
           fail: true
-          request-reviews: true
+          request-reviews: false
       
-      - name: Comment on PR - Reviews pending
-        if: steps.review-check.outputs.requirements-satisfied == 'false'
+      # 5. NEW: Request reviews from individual team members
+      - name: Request reviews from team members
+        if: github.event_name == 'pull_request'
         uses: actions/github-script@v7
+        env:
+          TEAMS: ${{ steps.load-mapping.outputs.teams }}
+          REVIEWERS_PER_TEAM: ${{ inputs.reviewers-per-team }}
         with:
-          github-token: ${{ secrets.token }}
+          github-token: ${{ secrets.TOKEN }}  # Necesita read:org scope
           script: |
-            const projectName = '${{ inputs.project-name }}';
-            const description = '${{ steps.load-mapping.outputs.description }}';
-            const teamsJson = '${{ steps.load-mapping.outputs.teams }}';
-            const teams = JSON.parse(teamsJson);
+            const teams = JSON.parse(process.env.TEAMS);
+            const reviewersPerTeam = parseInt(process.env.REVIEWERS_PER_TEAM);
+            const org = context.repo.owner;
+            const repo = context.repo.repo;
+            const prNumber = context.issue.number;
             
-            const teamList = teams.map(team => `- @MagellanTV/${team}`).join('\n');
+            const allReviewers = [];
+            const prAuthor = context.payload.pull_request.user.login;
             
-            const comment = `
-            ## ⚠️ Required Reviews Pending
-            
-            **Project:** ${projectName}  
-            **Description:** ${description}  
-            
-            ### Required Teams
-            This PR requires approval from **at least one member** of each of the following teams:
-            
-            ${teamList}
-            
-            **Status:** ❌ Waiting for approvals
-            
-            ---
-            <sub>Automatically assigned based on project-team mapping</sub>
-            `;
-            
-            // Check if we already commented
-            const { data: comments } = await github.rest.issues.listComments({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number
+            const { data: reviews } = await github.rest.pulls.listReviews({
+              owner: org,
+              repo: repo,
+              pull_number: prNumber
             });
             
-            const botComment = comments.find(comment => 
-              comment.user.type === 'Bot' && 
-              comment.body.includes('Required Reviews Pending')
-            );
+            const existingReviewers = new Set(reviews.map(r => r.user.login));
             
-            if (botComment) {
-              // Update existing comment
-              await github.rest.issues.updateComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                comment_id: botComment.id,
-                body: comment
-              });
-            } else {
-              // Create new comment
-              await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: context.issue.number,
-                body: comment
-              });
+            for (const teamSlug of teams) {
+              try {
+                const { data: members } = await github.rest.teams.listMembersInOrg({
+                  org: org,
+                  team_slug: teamSlug
+                });
+                
+                const availableMembers = members
+                  .map(m => m.login)
+                  .filter(login => login !== prAuthor && !existingReviewers.has(login));
+                
+                if (availableMembers.length === 0) {
+                  console.log(`${teamSlug}: no available members`);
+                  continue;
+                }
+                
+                const selectedReviewers = availableMembers
+                  .sort(() => Math.random() - 0.5)
+                  .slice(0, Math.min(reviewersPerTeam, availableMembers.length));
+                
+                console.log(`${teamSlug}: ${selectedReviewers.join(', ')}`);
+                allReviewers.push(...selectedReviewers);
+                
+              } catch (error) {
+                console.error(`${teamSlug}: ${error.message}`);
+              }
             }
-      
-      - name: Display success message
-        if: steps.review-check.outputs.requirements-satisfied == 'true'
-        run: |
-          echo "════════════════════════════════════════════════════════════"
-          echo "✅ ALL REQUIRED REVIEWS COMPLETED"
-          echo "════════════════════════════════════════════════════════════"
-          echo "Project: ${{ inputs.project-name }}"
-          echo "All required teams have approved this PR"
-          echo "════════════════════════════════════════════════════════════"
+            
+            const uniqueReviewers = [...new Set(allReviewers)];
+            
+            if (uniqueReviewers.length === 0) {
+              console.log('No reviewers to request');
+              return;
+            }
+            
+            try {
+              await github.rest.pulls.requestReviewers({
+                owner: org,
+                repo: repo,
+                pull_number: prNumber,
+                reviewers: uniqueReviewers
+              });
+              
+              console.log(`Requested: ${uniqueReviewers.join(', ')}`);
+            } catch (error) {
+              console.error(`Error: ${error.message}`);
+              core.setFailed(error.message);
+            }
