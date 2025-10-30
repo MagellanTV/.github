@@ -24,13 +24,10 @@ jobs:
     steps:
       - name: Checkout calling repository
         uses: actions/checkout@v4
-      
-      - name: Checkout organization .github repository
-        uses: actions/checkout@v4
         with:
           repository: MagellanTV/.github
           path: .github-org
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.token }}
       
       - name: Display PR information
         run: |
