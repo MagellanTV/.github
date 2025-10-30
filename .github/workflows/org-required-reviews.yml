@@ -92,7 +92,29 @@ jobs:
           requirements-file: /tmp/required-reviews-temp.yml
           status: Required reviews
           fail: true
-          request-reviews: false  # ← CHANGED: No solicitamos revisión de equipos aquí
+          request-reviews: false
+      
+      # 4.5. Auto-assign PR to creator
+      - name: Auto-assign PR to creator
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.TOKEN }}
+          script: |
+            const prAuthor = context.payload.pull_request.user.login;
+            const prNumber = context.issue.number;
+            
+            try {
+              await github.rest.issues.addAssignees({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: prNumber,
+                assignees: [prAuthor]
+              });
+              console.log(`Assigned to: ${prAuthor}`);
+            } catch (error) {
+              console.log(`Could not assign: ${error.message}`);
+            }
       
       # 5. NEW: Request reviews from individual team members
       - name: Request reviews from team members
@@ -102,7 +124,7 @@ jobs:
           TEAMS: ${{ steps.load-mapping.outputs.teams }}
           REVIEWERS_PER_TEAM: ${{ inputs.reviewers-per-team }}
         with:
-          github-token: ${{ secrets.TOKEN }} 
+          github-token: ${{ secrets.TOKEN }}
           script: |
             const teams = JSON.parse(process.env.TEAMS);
             const reviewersPerTeam = parseInt(process.env.REVIEWERS_PER_TEAM);

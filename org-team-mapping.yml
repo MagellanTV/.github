@@ -22,18 +22,19 @@ projects:
   magellantv-smarttv:
     teams:
       - smarttv-team
+      - tech-leads
       - test-team
     description: "Smart TV App"
   
   magellantv-appletv:
     teams:
       - apple-team
+      - tech-leads
       - test-team
     description: "Apple TV App"
   
   magellantv-backend:
     teams:
-      - backend-team
       - tech-leads
     description: "Backend Services"
   
