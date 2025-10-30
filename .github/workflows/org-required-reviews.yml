@@ -1,4 +1,4 @@
-name: Required Reviews Enforcement (Reusable)
+name: Required Reviews Enforcement
 
 on:
   workflow_call:
@@ -22,12 +22,12 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
-      - name: Checkout calling repository
+      - name: Checkout organization .github repository
         uses: actions/checkout@v4
         with:
           repository: MagellanTV/.github
           path: .github-org
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.token }}
       
       - name: Display PR information
         run: |
@@ -129,7 +129,7 @@ jobs:
         id: review-check
         uses: Automattic/action-required-review@v3
         with:
-          token: ${{ secrets.REQUIRED_REVIEWS_TOKEN }}
+          token: ${{ secrets.token }} 
           requirements-file: '/tmp/required-reviews-temp.yml'
           status: 'Required reviews'
           fail: true
@@ -139,7 +139,7 @@ jobs:
         if: steps.review-check.outputs.requirements-satisfied == 'false'
         uses: actions/github-script@v7
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          github-token: ${{ secrets.token }}
           script: |
             const projectName = '${{ inputs.project-name }}';
             const description = '${{ steps.load-mapping.outputs.description }}';
