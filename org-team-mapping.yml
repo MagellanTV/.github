@@ -19,7 +19,7 @@ projects:
       - test-team
     description: "Roku App"
   
-  magellantv-smarttv:
+  smart-tv:
     teams:
       - smarttv-team
       - tech-leads
