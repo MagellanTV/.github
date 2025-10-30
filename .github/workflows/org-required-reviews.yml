@@ -132,8 +132,7 @@ jobs:
         uses: Automattic/action-required-review@v3
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          requirements-file: '.github-org/org-team-mapping.yml'
-          virtual-teams-file: '.github-org/org-reviews-teams.yml'
+          requirements-file: '/tmp/required-reviews-temp.yml'
           status: 'Required reviews'
           fail: true
           request-reviews: true
