@@ -1,0 +1,42 @@
+# ============================================================================
+# CLAUDE PR REVIEW - CONSUMER TEMPLATE
+# ============================================================================
+# Copy this file to your repository as:
+#   .github/workflows/claude-review.yml
+#
+# That is the only thing that goes into the repository. The prompt, the review
+# guidelines, the model and the cost controls all live in MagellanTV/.github
+# and change in one place for every project.
+#
+# Requirements (already configured at the organization level):
+#   - Organization secret CLAUDE_CODE_OAUTH_TOKEN, visible to this repository
+#   - The Claude GitHub App installed on the organization
+#
+# Optional per-repo overrides, all of them defaulted centrally:
+#   platform:      roku | android | smarttv | web | apple | backend | generic
+#   model:         pin a model for this repository only
+#   max-turns:     raise or lower the budget for this repository
+#   review-drafts: true to also review draft pull requests
+# ============================================================================
+
+name: Claude PR Review
+
+on:
+  pull_request:
+    types: [opened, ready_for_review, reopened]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - '.github/**'
+      - '**/package-lock.json'
+      - '**/yarn.lock'
+      - '**/Podfile.lock'
+
+jobs:
+  claude-review:
+    uses: MagellanTV/.github/.github/workflows/org-claude-review.yml@main
+    permissions:
+      contents: read
+      pull-requests: write
+      id-token: write
+    secrets: inherit
