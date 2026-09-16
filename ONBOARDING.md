@@ -179,18 +179,45 @@ enforces the other six.
 **Organization rulesets are available on the Team plan** and fix this: define
 the rule once, target repositories by pattern, and every repository inherits it.
 
-> Organization settings → Repository → Rulesets → New ruleset → New branch ruleset
+Both are written out in `rulesets/`, derived from what `smart-tv` already runs:
 
-Two worth unifying, mirroring what `smart-tv` already runs:
+| File | What it does |
+|---|---|
+| `rulesets/org-branch-naming.json` | Restrict creations on `~ALL` except `feature/*`, `fix/*`, `hotfix/*`, `release/*` and the default-branch names in use (`main`, `master`, `develop`, `legacy`, `legacy-develop`) |
+| `rulesets/org-pr-approvals.json` | On `~DEFAULT_BRANCH`: restrict deletions, block force pushes, require a PR with 1 approval, code-owner review, last-push approval and thread resolution |
 
-**Branch Naming Convention** — target `~ALL` excluding `refs/heads/feature/*`,
-`fix/*`, `hotfix/*`, `release/*`, `main`, `develop`; rule: **Restrict creations**.
+Two ways to apply them:
 
-**PR Approvals** — target the default branch; rules: **Restrict deletions**,
-**Block force pushes**, **Require a pull request before merging** with 1
-approval, dismiss stale reviews off, require conversation resolution on.
+**Through the UI** — Organization settings → Repository → Rulesets → New
+ruleset → New branch ruleset. The JSON mirrors the fields the form asks for,
+one to one. No token changes needed; this is the recommended route.
 
-Start both in **Evaluate** mode. It records what *would* have been blocked
+**Through the API** — `./scripts/apply-org-rulesets.sh`, which creates or
+updates by ruleset name so rerunning is safe. It needs `admin:org`
+(`gh auth refresh -h github.com -s admin:org`), and that scope grants full
+organization administration — members, teams, webhooks, org secrets — not just
+rulesets. Worth weighing against five minutes in the UI.
+
+**No repository is excluded.** Both rules apply to every repository in the org,
+including this one.
+
+**Who can bypass**, mirroring `smart-tv`:
+
+| Ruleset | Bypass |
+|---|---|
+| Branch Naming Convention | Nobody |
+| PR Approvals | Organization admins, and repository role 5 (admin) |
+
+`actor_id` is `null` on the `OrganizationAdmin` entry on purpose — GitHub's
+schema says it is ignored for that actor type, and this is the shape the API
+returns for the live `smart-tv` ruleset.
+
+Note the extra branch exclusions versus `smart-tv`'s copy: `master`, `legacy`
+and `legacy-develop` are default branches elsewhere in the org, and `apple-tv`
+also carries branches like `VRT-2067-danfelix` and `bug/VRT-1960` that the
+naming rule would reject. That is what Evaluate mode is for.
+
+Both files ship as **Evaluate**. It records what *would* have been blocked
 without blocking anything, which is the only safe way to find out whether a
 rule breaks someone's workflow. Move to **Active** once the evaluation is quiet.
 

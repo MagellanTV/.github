@@ -1,0 +1,59 @@
+{
+  "name": "PR Approvals",
+  "target": "branch",
+  "enforcement": "evaluate",
+  "conditions": {
+    "repository_name": {
+      "include": [
+        "~ALL"
+      ],
+      "exclude": []
+    },
+    "ref_name": {
+      "include": [
+        "~DEFAULT_BRANCH"
+      ],
+      "exclude": []
+    }
+  },
+  "rules": [
+    {
+      "type": "deletion"
+    },
+    {
+      "type": "non_fast_forward"
+    },
+    {
+      "type": "pull_request",
+      "parameters": {
+        "required_approving_review_count": 1,
+        "dismiss_stale_reviews_on_push": false,
+        "require_code_owner_review": true,
+        "require_last_push_approval": true,
+        "required_review_thread_resolution": true,
+        "require_extra_approval_for_unattributed_changes": true,
+        "allowed_merge_methods": [
+          "squash",
+          "merge"
+        ],
+        "dismissal_restriction": {
+          "allowed_actors": [],
+          "enabled": false
+        },
+        "required_reviewers": []
+      }
+    }
+  ],
+  "bypass_actors": [
+    {
+      "actor_id": null,
+      "actor_type": "OrganizationAdmin",
+      "bypass_mode": "always"
+    },
+    {
+      "actor_id": 5,
+      "actor_type": "RepositoryRole",
+      "bypass_mode": "always"
+    }
+  ]
+}

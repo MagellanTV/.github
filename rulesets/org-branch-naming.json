@@ -1,0 +1,35 @@
+{
+  "name": "Branch Naming Convention",
+  "target": "branch",
+  "enforcement": "evaluate",
+  "conditions": {
+    "repository_name": {
+      "include": [
+        "~ALL"
+      ],
+      "exclude": []
+    },
+    "ref_name": {
+      "include": [
+        "~ALL"
+      ],
+      "exclude": [
+        "refs/heads/feature/*",
+        "refs/heads/fix/*",
+        "refs/heads/hotfix/*",
+        "refs/heads/release/*",
+        "refs/heads/main",
+        "refs/heads/master",
+        "refs/heads/develop",
+        "refs/heads/legacy",
+        "refs/heads/legacy-develop"
+      ]
+    }
+  },
+  "rules": [
+    {
+      "type": "creation"
+    }
+  ],
+  "bypass_actors": []
+}
