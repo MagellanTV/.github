@@ -50,6 +50,11 @@ for repo in "$@"; do
     continue
   fi
 
+  if git ls-remote --exit-code --heads "git@${GIT_HOST}:${ORG}/${repo}.git" "$BRANCH" >/dev/null 2>&1; then
+    echo "    skipped: branch $BRANCH already exists on the remote"
+    continue
+  fi
+
   if [ "$DRY_RUN" = "1" ]; then
     echo "    dry run: would add .github/workflows/claude-review.yml and open a PR"
     continue
@@ -60,7 +65,7 @@ for repo in "$@"; do
 
   (
     cd "$clone"
-    base="$(gh repo view --json defaultBranchRef --jq .defaultBranchRef.name)"
+    base="$(gh repo view "$ORG/$repo" --json defaultBranchRef --jq .defaultBranchRef.name)"
     git checkout -q -b "$BRANCH"
     mkdir -p .github/workflows
     cp "$TEMPLATE" .github/workflows/claude-review.yml
@@ -71,7 +76,11 @@ Adds the caller for MagellanTV/.github/.github/workflows/org-claude-review.yml.
 Prompt, review guidelines, model and cost controls stay centralized in the
 organization .github repository."
     git push -q -u origin "$BRANCH"
+    # --repo and --head are explicit because the remote is an SSH alias that gh
+    # cannot resolve back to a GitHub repository on its own.
     gh pr create \
+      --repo "$ORG/$repo" \
+      --head "$BRANCH" \
       --base "$base" \
       --title "ci: enable organization Claude PR review" \
       --body "Adds the caller workflow for the organization-wide Claude PR review.
