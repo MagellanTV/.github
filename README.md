@@ -67,7 +67,12 @@ Keep the caller identical to `claude-review.caller.yml` and do the tuning here.
 
 ### Enabling it org-wide without touching repositories
 
-On GitHub Enterprise Cloud, an organization ruleset can run the workflow across
+**Not available today.** The rule below is GitHub Enterprise Cloud only and the
+organization is on the **Team** plan, so `org-claude-review-ruleset.yml` is
+inert. The per-repo caller is what runs the review. Kept documented in case the
+org upgrades.
+
+On Enterprise Cloud, an organization ruleset can run the workflow across
 repositories with no file in any of them:
 
 > Organization settings → Rulesets → New ruleset → Target: repositories
