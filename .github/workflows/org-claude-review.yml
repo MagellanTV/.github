@@ -75,12 +75,12 @@ jobs:
 
     steps:
       - name: Checkout pull request branch
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 1
 
       - name: Checkout organization configuration
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           repository: MagellanTV/.github
           ref: main
