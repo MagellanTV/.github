@@ -22,28 +22,58 @@ REPOS=(apple-tv FM_.xlsx_to_JSON magellan_analytics_kmp magellantv-backend
        magellantv_roku magellantv-android magellantv-aspera-sync
        magellantv-encoder magellantv-ios magellantv-web smart-tv workticket)
 
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
-echo "Collecting branches..."
-: > "$work/all.txt"
-for r in "${REPOS[@]}"; do
-  gh api "repos/$ORG/$r/branches?per_page=100" --paginate \
-    --jq ".[] | \"$r|\(.name)\"" 2>/dev/null >> "$work/all.txt" || true
-done
+# Every failure is reported. A repository that silently contributes zero rows
+# does not read as an error -- it reads as a repository with tidy branch names,
+# which is the one way this script can talk somebody into the wrong decision.
+failures=0
 
-echo "Collecting recent pull request head branches..."
-: > "$work/recent.txt"
-for r in "${REPOS[@]}"; do
-  gh pr list --repo "$ORG/$r" --state all --limit 25 \
-    --json headRefName --jq ".[] | \"$r|\(.headRefName)\"" 2>/dev/null >> "$work/recent.txt" || true
-done
+collect() {
+  local label="$1" out="$2"; shift 2
+  echo "Collecting $label..."
+  : > "$out"
+  for r in "${REPOS[@]}"; do
+    local before after err
+    before="$(wc -l < "$out")"
+    err="$work/err.txt"
+    if [ "$label" = "branches" ]; then
+      gh api "repos/$ORG/$r/branches?per_page=100" --paginate \
+        --jq ".[] | \"$r|\(.name)\"" >> "$out" 2>"$err" || true
+    else
+      gh pr list --repo "$ORG/$r" --state all --limit 25 \
+        --json headRefName --jq ".[] | \"$r|\(.headRefName)\"" >> "$out" 2>"$err" || true
+    fi
+    after="$(wc -l < "$out")"
+    if [ -s "$err" ]; then
+      echo "  !! $r: $(head -1 "$err")" >&2
+      failures=$((failures + 1))
+    elif [ "$before" -eq "$after" ]; then
+      echo "  !! $r: returned nothing — verify this is real before trusting the totals" >&2
+      failures=$((failures + 1))
+    fi
+  done
+}
 
-python3 - "$work/all.txt" "$work/recent.txt" <<'PY'
+collect branches "$work/all.txt"
+collect "recent pull request head branches" "$work/recent.txt"
+
+if [ "$failures" -gt 0 ]; then
+  echo
+  echo "WARNING: $failures repository/collection pair(s) produced no data or errored." >&2
+  echo "The percentages below are computed over what was actually collected." >&2
+fi
+
+python3 - "$work/all.txt" "$work/recent.txt" "$here" <<'PY'
 import collections, json, os, sys
 
-here = os.path.dirname(os.path.dirname(os.path.abspath(__file__))) if '__file__' in dir() else '.'
-cfg = json.load(open(os.path.join(os.getcwd(), 'rulesets/org-branch-naming.json')))
+# Repo root comes from the shell, which derived it from BASH_SOURCE. Reading it
+# relative to the working directory only works when the script is run from the
+# repo root, and this is a script people will run from wherever they are.
+repo_root = sys.argv[3]
+cfg = json.load(open(os.path.join(repo_root, 'rulesets/org-branch-naming.json')))
 excludes = cfg['conditions']['ref_name']['exclude']
 
 prefixes = tuple(e[len('refs/heads/'):-1] for e in excludes if e.endswith('/*'))
