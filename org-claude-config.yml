@@ -5,7 +5,12 @@
 # Editing this file changes the next review in every repository -- no workflow
 # change, no consumer-repo change.
 #
-# The key is the repository name, the same convention as org-team-mapping.yml.
+# The key is the GITHUB REPOSITORY NAME, not the local folder name. They differ
+# for some projects (the `magellantv_dev_ci` folder is `magellantv-backend`,
+# `newui-web` is `magellantv-web`). The workflow looks the project up by
+# `github.event.repository.name`, so a key that does not match the repo silently
+# falls back to `defaults`. Same convention as org-team-mapping.yml.
+#
 # Anything a project does not set falls back to `defaults`.
 #
 #   platform    which claude-guidelines/<platform>.md is loaded
@@ -26,6 +31,9 @@ defaults:
   max-turns: 25
 
 projects:
+
+  # --- Client apps -----------------------------------------------------------
+
   smart-tv:
     platform: smarttv
     description: "Smart TV app - Preact monorepo for webOS, Tizen, Vizio, Vidaa, WhaleTV"
@@ -38,23 +46,47 @@ projects:
     platform: android
     description: "Android and Fire TV app"
 
-  newui-web:
-    platform: web
-    description: "Website"
+  magellantv-ios:
+    platform: apple
+    description: "iOS app"
 
   apple-tv:
     platform: apple
     description: "Apple TV app"
 
-  magellantv-ios:
-    platform: apple
-    description: "iOS app"
+  magellantv-web:
+    platform: web
+    description: "Website"
+
+  magellan_analytics_kmp:
+    platform: android
+    description: "Kotlin Multiplatform analytics library - ships into both the Android and Apple apps"
+
+  # --- Services --------------------------------------------------------------
+
+  magellantv-backend:
+    platform: backend
+    description: "Backend services"
 
   magellantv-encoder:
     platform: backend
     effort: xhigh
     description: "Encoding and media processing - a bad ladder or manifest change reaches every device at once"
 
-  magellantv_dev_ci:
+  magellantv-aspera-sync:
     platform: backend
-    description: "CI and deployment tooling"
+    description: "Aspera transfer sync service"
+
+  # --- Tooling and configuration ---------------------------------------------
+
+  workticket:
+    platform: tooling
+    description: "Ticket-to-PR workflow tooling"
+
+  FM_.xlsx_to_JSON:
+    platform: tooling
+    description: "FAST schedule converter - spreadsheet to JSON"
+
+  magellantv-app-config:
+    platform: tooling
+    description: "Remote app configuration"

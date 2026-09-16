@@ -121,7 +121,17 @@ jobs:
               config = yaml.safe_load(f) or {}
 
           defaults = config.get('defaults', {}) or {}
-          entry = (config.get('projects', {}) or {}).get(project, {}) or {}
+          projects = config.get('projects', {}) or {}
+          entry = projects.get(project, {}) or {}
+
+          # A key that does not match the repository name falls back to the org
+          # defaults and produces a generic review. That used to happen in
+          # silence, which is how two projects sat misconfigured under their
+          # folder names instead of their repo names. Say it loudly instead.
+          if project not in projects:
+              print(f'::warning::"{project}" is not in org-claude-config.yml. '
+                    f'Falling back to org defaults and the generic checklist. '
+                    f'The key must be the GitHub repository name.')
 
           def resolve(key, env_var, fallback):
               """Workflow input wins, then the project entry, then org defaults."""

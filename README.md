@@ -17,6 +17,7 @@ policy live here; consumer repositories carry only a thin caller.
 | `claude-guidelines/` | Review policy and platform checklists |
 | `claude-review.caller.yml` | Template to copy into a consumer repository |
 | `scripts/rollout-claude-review.sh` | Opens the caller PR across repositories |
+| `ONBOARDING.md` | How to enable the review on a new repository, and troubleshooting |
 
 ---
 
@@ -34,8 +35,10 @@ Claude reviews pull requests using three layers, in order:
 
 ### Enabling it in a repository
 
-Copy `claude-review.caller.yml` to `.github/workflows/claude-review.yml`, or let
-the script do it:
+Full walkthrough, including the release-train and branch-naming gotchas, in
+**[ONBOARDING.md](ONBOARDING.md)**. The short version — copy
+`claude-review.caller.yml` to `.github/workflows/claude-review.yml`, or let the
+script do it:
 
 ```bash
 DRY_RUN=1 ./scripts/rollout-claude-review.sh smart-tv   # preview
