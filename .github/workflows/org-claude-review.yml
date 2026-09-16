@@ -1,0 +1,157 @@
+# ============================================================================
+# CLAUDE PR REVIEW - ORGANIZATION REUSABLE WORKFLOW
+# ============================================================================
+# All the logic, the prompt and the review guidelines live here. Consumer
+# repositories only add a ~15 line caller (see claude-review.caller.yml).
+#
+# Central configuration:
+#   - org-claude-config.yml          -> per-project review profile
+#   - claude-guidelines/_org.md      -> organization review policy
+#   - claude-guidelines/<platform>.md -> platform specific checklist
+#
+# Each repository keeps its own CLAUDE.md for architecture and local
+# conventions; Claude reads it on top of the organization guidelines.
+# ============================================================================
+
+name: Claude PR Review (org)
+
+on:
+  workflow_call:
+    inputs:
+      project-name:
+        description: 'Key used to look up org-claude-config.yml (defaults to the calling repository name)'
+        required: false
+        type: string
+        default: ''
+      platform:
+        description: 'Override the platform profile (roku | android | smarttv | web | apple | backend | generic)'
+        required: false
+        type: string
+        default: ''
+      model:
+        description: 'Model id passed to --model. Empty uses the action default.'
+        required: false
+        type: string
+        default: ''
+      max-turns:
+        description: 'Upper bound on agent turns, keeps a runaway review from burning budget'
+        required: false
+        type: number
+        default: 25
+      skip-label:
+        description: 'PRs carrying this label are not reviewed'
+        required: false
+        type: string
+        default: 'skip-claude-review'
+      review-drafts:
+        description: 'Review pull requests that are still in draft'
+        required: false
+        type: boolean
+        default: false
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN:
+        description: 'Organization secret holding the Claude Code OAuth token'
+        required: true
+
+concurrency:
+  group: claude-review-${{ github.repository }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    name: Claude review
+    runs-on: ubuntu-latest
+
+    # Forks never receive organization secrets, so skip instead of failing red.
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      (inputs.review-drafts || github.event.pull_request.draft == false) &&
+      !contains(github.event.pull_request.labels.*.name, inputs.skip-label)
+
+    permissions:
+      contents: read
+      pull-requests: write
+      id-token: write
+
+    steps:
+      - name: Checkout pull request branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Checkout organization configuration
+        uses: actions/checkout@v4
+        with:
+          repository: MagellanTV/.github
+          ref: main
+          path: .github-org
+
+      - name: Resolve review profile
+        id: profile
+        env:
+          PROJECT_NAME: ${{ inputs.project-name != '' && inputs.project-name || github.event.repository.name }}
+          PLATFORM_OVERRIDE: ${{ inputs.platform }}
+        run: |
+          python3 << 'PYTHON_EOF'
+          import os
+          import yaml
+
+          project = os.environ['PROJECT_NAME']
+          override = os.environ.get('PLATFORM_OVERRIDE', '').strip()
+
+          with open('.github-org/org-claude-config.yml') as f:
+              config = yaml.safe_load(f) or {}
+
+          defaults = config.get('defaults', {}) or {}
+          entry = (config.get('projects', {}) or {}).get(project, {}) or {}
+
+          platform = override or entry.get('platform') or defaults.get('platform', 'generic')
+
+          guideline = f'.github-org/claude-guidelines/{platform}.md'
+          if not os.path.exists(guideline):
+              print(f'No guideline file for platform "{platform}", falling back to generic')
+              platform = 'generic'
+
+          print(f'project={project}  platform={platform}')
+
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as out:
+              out.write(f'platform={platform}\n')
+              out.write(f'project={project}\n')
+          PYTHON_EOF
+
+      - name: Claude review
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          track_progress: true
+          prompt: |
+            REPO: ${{ github.repository }}
+            PR NUMBER: ${{ github.event.pull_request.number }}
+            PROYECTO: ${{ steps.profile.outputs.project }}
+            PLATAFORMA: ${{ steps.profile.outputs.platform }}
+
+            Eres el revisor de código de la organización MagellanTV.
+
+            Antes de revisar nada, lee estos archivos en este orden:
+
+            1. `.github-org/claude-guidelines/_org.md`
+               Política de revisión de la organización. Define el formato de salida,
+               la escala de severidad y qué NO se debe comentar. Es obligatoria.
+
+            2. `.github-org/claude-guidelines/${{ steps.profile.outputs.platform }}.md`
+               Checklist específico de la plataforma de este repositorio.
+
+            3. `CLAUDE.md` en la raíz del repositorio, si existe.
+               Arquitectura, comandos y convenciones de ESTE proyecto. Es la fuente
+               de verdad sobre lo local y manda sobre cualquier suposición general.
+
+            La rama del PR ya está en el working directory. Usa `gh pr diff` para
+            ver los cambios y `gh pr view` para el título, la descripción y los labels.
+
+            Revisa únicamente lo que cambia este PR. Aplica exactamente el formato,
+            la severidad y las reglas de omisión que define `_org.md`.
+
+          claude_args: |
+            --allowedTools "Read,Glob,Grep,mcp__github_inline_comment__create_inline_comment,Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr comment:*)"
+            --max-turns ${{ inputs.max-turns }}
+            ${{ inputs.model != '' && format('--model {0}', inputs.model) || '' }}

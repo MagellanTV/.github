@@ -1,2 +1,103 @@
-# .github
-MagellanTV
+# .github — MagellanTV organization automation
+
+Shared GitHub configuration for every MagellanTV repository. Workflow logic and
+policy live here; consumer repositories carry only a thin caller.
+
+## What lives here
+
+| Path | Purpose |
+|------|---------|
+| `PULL_REQUEST_TEMPLATE.md` | Organization pull request template |
+| `.github/workflows/org-required-reviews.yml` | Reusable: required reviewers per team |
+| `.github/workflows/org-claude-review.yml` | Reusable: Claude PR review |
+| `.github/workflows/org-claude-review-ruleset.yml` | Ruleset entrypoint for the Claude review (GHEC) |
+| `org-team-mapping.yml` | Which teams must review which project |
+| `org-labeler.yml` | Shared auto-labeling rules |
+| `org-claude-config.yml` | Per-project Claude review profile |
+| `claude-guidelines/` | Review policy and platform checklists |
+| `claude-review.caller.yml` | Template to copy into a consumer repository |
+| `scripts/rollout-claude-review.sh` | Opens the caller PR across repositories |
+
+---
+
+## Claude PR review
+
+Claude reviews pull requests using three layers, in order:
+
+1. **`claude-guidelines/_org.md`** — organization policy. Severity scale, output
+   format, and the list of things not worth commenting on. Change this file to
+   change how every project is reviewed.
+2. **`claude-guidelines/<platform>.md`** — platform checklist, selected by the
+   `platform` key in `org-claude-config.yml`.
+3. **The repository's own `CLAUDE.md`** — architecture, commands and local
+   conventions. It wins over the two files above.
+
+### Enabling it in a repository
+
+Copy `claude-review.caller.yml` to `.github/workflows/claude-review.yml`, or let
+the script do it:
+
+```bash
+DRY_RUN=1 ./scripts/rollout-claude-review.sh smart-tv   # preview
+./scripts/rollout-claude-review.sh smart-tv             # opens a PR
+```
+
+### Enabling it org-wide without touching repositories
+
+On GitHub Enterprise Cloud, an organization ruleset can run the workflow across
+repositories with no file in any of them:
+
+> Organization settings → Rulesets → New ruleset → Target: repositories
+> Rule: **Require workflows to pass before merging**
+> Source repository `MagellanTV/.github`, path
+> `.github/workflows/org-claude-review-ruleset.yml`, ref `main`
+
+Start the ruleset in **Evaluate** mode to confirm the run and the organization
+secret resolve before switching it to **Active**.
+
+Both paths run the same reusable workflow, so the review behaves identically.
+
+### Prerequisites
+
+- Organization secret **`CLAUDE_CODE_OAUTH_TOKEN`**, visible to the repositories
+  in scope. Generate it with `claude setup-token`.
+- The **Claude GitHub App** installed on the organization
+  (<https://github.com/apps/claude>), so review comments come from `claude[bot]`
+  and inline comments work.
+- Actions must be allowed to run `anthropics/claude-code-action` — check
+  Organization settings → Actions → Policies if third-party actions are
+  restricted.
+
+### Tuning
+
+| Knob | Where |
+|------|-------|
+| Review policy, severity, output format | `claude-guidelines/_org.md` |
+| Platform checklist | `claude-guidelines/<platform>.md` |
+| Platform per project | `org-claude-config.yml` |
+| Model, turn budget, draft handling | inputs in `org-claude-review.yml` |
+| Which events trigger a review | `on:` block in the caller |
+| Paths that never trigger a review | `paths-ignore` in the caller |
+
+Skip a single pull request with the **`skip-claude-review`** label.
+
+Reviews run on `opened`, `ready_for_review` and `reopened` — deliberately not on
+every push, so a PR is reviewed once rather than once per commit.
+
+Pull requests from forks are skipped: GitHub does not expose organization
+secrets to them.
+
+---
+
+## Required reviews
+
+`org-required-reviews.yml` reads `org-team-mapping.yml`, requires an approval
+from each mapped team, assigns the PR to its author, and requests a reviewer
+from each team. Consumer repositories call it from
+`.github/workflows/required-reviews.yml` and pass `REQUIRED_REVIEWS_TOKEN`.
+
+## Labeling
+
+`org-labeler.yml` holds the shared label rules. Consumer repositories check this
+repository out and point `actions/labeler` at it, so label rules change in one
+place.
