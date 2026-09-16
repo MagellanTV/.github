@@ -13,6 +13,14 @@ set -euo pipefail
 
 ORG="MagellanTV"
 BRANCH="feature/claude-pr-review"
+
+# SSH host to clone through. Defaults to the `MagellanTV` alias, because these
+# repositories are normally cloned that way and the alias selects the key with
+# write access. `gh repo clone` would use plain github.com, which on a machine
+# with several GitHub accounts can resolve to a read-only identity and fail at
+# push time. Override with GIT_HOST=github.com if your default key is the
+# right one.
+GIT_HOST="${GIT_HOST:-MagellanTV}"
 TEMPLATE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/claude-review.caller.yml"
 DRY_RUN="${DRY_RUN:-0}"
 
@@ -48,7 +56,7 @@ for repo in "$@"; do
   fi
 
   clone="$workdir/$repo"
-  gh repo clone "$ORG/$repo" "$clone" -- --depth 1 --quiet
+  git clone --depth 1 --quiet "git@${GIT_HOST}:${ORG}/${repo}.git" "$clone"
 
   (
     cd "$clone"
