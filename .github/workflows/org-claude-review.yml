@@ -28,16 +28,24 @@ on:
         required: false
         type: string
         default: ''
+      # The three knobs below are normally left empty and read from
+      # org-claude-config.yml, so they can be changed for every project in one
+      # place. Set them here only to override a single repository.
       model:
-        description: 'Model id passed to --model. Empty uses the action default.'
+        description: 'Override --model for this repository'
+        required: false
+        type: string
+        default: ''
+      effort:
+        description: 'Override --effort for this repository (low | medium | high | xhigh | max)'
         required: false
         type: string
         default: ''
       max-turns:
-        description: 'Upper bound on agent turns, keeps a runaway review from burning budget'
+        description: 'Override the turn budget for this repository. 0 reads the config.'
         required: false
         type: number
-        default: 25
+        default: 0
       skip-label:
         description: 'PRs carrying this label are not reviewed'
         required: false
@@ -99,13 +107,15 @@ jobs:
         env:
           PROJECT_NAME: ${{ inputs.project-name != '' && inputs.project-name || github.event.repository.name }}
           PLATFORM_OVERRIDE: ${{ inputs.platform }}
+          MODEL_OVERRIDE: ${{ inputs.model }}
+          EFFORT_OVERRIDE: ${{ inputs.effort }}
+          MAX_TURNS_OVERRIDE: ${{ inputs.max-turns }}
         run: |
           python3 << 'PYTHON_EOF'
           import os
           import yaml
 
           project = os.environ['PROJECT_NAME']
-          override = os.environ.get('PLATFORM_OVERRIDE', '').strip()
 
           with open('.github-org/org-claude-config.yml') as f:
               config = yaml.safe_load(f) or {}
@@ -113,7 +123,22 @@ jobs:
           defaults = config.get('defaults', {}) or {}
           entry = (config.get('projects', {}) or {}).get(project, {}) or {}
 
-          platform = override or entry.get('platform') or defaults.get('platform', 'generic')
+          def resolve(key, env_var, fallback):
+              """Workflow input wins, then the project entry, then org defaults."""
+              override = str(os.environ.get(env_var, '') or '').strip()
+              if override and override != '0':
+                  return override
+              return str(entry.get(key) or defaults.get(key) or fallback)
+
+          platform = resolve('platform', 'PLATFORM_OVERRIDE', 'generic')
+          model = resolve('model', 'MODEL_OVERRIDE', 'claude-sonnet-5')
+          effort = resolve('effort', 'EFFORT_OVERRIDE', 'high')
+          max_turns = resolve('max-turns', 'MAX_TURNS_OVERRIDE', '25')
+
+          VALID_EFFORT = {'low', 'medium', 'high', 'xhigh', 'max'}
+          if effort not in VALID_EFFORT:
+              print(f'Unknown effort "{effort}", falling back to high')
+              effort = 'high'
 
           guideline = f'.github-org/claude-guidelines/{platform}.md'
           if not os.path.exists(guideline):
@@ -121,17 +146,26 @@ jobs:
               platform = 'generic'
 
           print(f'project={project}  platform={platform}')
+          print(f'model={model}  effort={effort}  max-turns={max_turns}')
 
           with open(os.environ['GITHUB_OUTPUT'], 'a') as out:
               out.write(f'platform={platform}\n')
               out.write(f'project={project}\n')
+              out.write(f'model={model}\n')
+              out.write(f'effort={effort}\n')
+              out.write(f'max_turns={max_turns}\n')
           PYTHON_EOF
 
       - name: Claude review
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          track_progress: true
+          # track_progress is deliberately off. It makes the action own the
+          # summary comment, and it prepends a hardcoded header --
+          # "**Claude finished @user's task in Ns** —— [View job]" plus a rule --
+          # that no input can disable (see comment-logic.ts in the action).
+          # With it off, Claude posts the comment itself through `gh pr comment`
+          # and the body is exactly what the guidelines ask for.
           # The SDK hides its output by default, which leaves a failed run
           # undiagnosable from the log. Label a pull request `claude-debug` and
           # rerun to get the full transcript. Registered secrets are masked by
@@ -141,31 +175,45 @@ jobs:
           prompt: |
             REPO: ${{ github.repository }}
             PR NUMBER: ${{ github.event.pull_request.number }}
-            PROYECTO: ${{ steps.profile.outputs.project }}
-            PLATAFORMA: ${{ steps.profile.outputs.platform }}
+            PROJECT: ${{ steps.profile.outputs.project }}
+            PLATFORM: ${{ steps.profile.outputs.platform }}
 
-            Eres el revisor de código de la organización MagellanTV.
+            You are the MagellanTV code reviewer. Write everything in English.
 
-            Antes de revisar nada, lee estos archivos en este orden:
+            Read these first, in order:
 
             1. `.github-org/claude-guidelines/_org.md`
-               Política de revisión de la organización. Define el formato de salida,
-               la escala de severidad y qué NO se debe comentar. Es obligatoria.
+               Organization review policy: severity scale, output format, and what
+               not to comment on. Mandatory.
 
             2. `.github-org/claude-guidelines/${{ steps.profile.outputs.platform }}.md`
-               Checklist específico de la plataforma de este repositorio.
+               Platform checklist for this repository.
 
-            3. `CLAUDE.md` en la raíz del repositorio, si existe.
-               Arquitectura, comandos y convenciones de ESTE proyecto. Es la fuente
-               de verdad sobre lo local y manda sobre cualquier suposición general.
+            3. `CLAUDE.md` at the repository root, if present.
+               Architecture, commands and local conventions. It is the source of
+               truth for this project and overrides any general assumption.
 
-            La rama del PR ya está en el working directory. Usa `gh pr diff` para
-            ver los cambios y `gh pr view` para el título, la descripción y los labels.
+            The PR branch is already checked out. Use `gh pr diff` for the changes
+            and `gh pr view` for the title, description and labels.
 
-            Revisa únicamente lo que cambia este PR. Aplica exactamente el formato,
-            la severidad y las reglas de omisión que define `_org.md`.
+            HOW TO DELIVER THE REVIEW -- this part is not optional:
+
+            Every finding that belongs to a specific line goes in an INLINE comment
+            on that line, via `mcp__github_inline_comment__create_inline_comment`.
+            Do not collect findings into the summary instead; a summary that lists
+            problems nobody can locate in the diff is a failed review.
+
+            Then post exactly ONE top-level comment with `gh pr comment`, in the
+            shape `_org.md` defines. It carries the verdict and an index of the
+            inline comments, not their content again.
+
+            If the diff is genuinely clean, post only the summary saying so. Do not
+            invent inline comments to look thorough.
+
+            Review only what this PR changes.
 
           claude_args: |
             --allowedTools "Read,Glob,Grep,mcp__github_inline_comment__create_inline_comment,Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr comment:*)"
-            --max-turns ${{ inputs.max-turns }}
-            ${{ inputs.model != '' && format('--model {0}', inputs.model) || '' }}
+            --model ${{ steps.profile.outputs.model }}
+            --effort ${{ steps.profile.outputs.effort }}
+            --max-turns ${{ steps.profile.outputs.max_turns }}

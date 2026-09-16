@@ -1,16 +1,29 @@
 # ============================================================================
 # CLAUDE PR REVIEW - PER PROJECT CONFIGURATION
 # ============================================================================
-# Read by .github/workflows/org-claude-review.yml. The key is the repository
-# name, the same convention used by org-team-mapping.yml.
+# Read by .github/workflows/org-claude-review.yml on every run, from main.
+# Editing this file changes the next review in every repository -- no workflow
+# change, no consumer-repo change.
 #
-# "platform" selects which file under claude-guidelines/ is loaded on top of
-# claude-guidelines/_org.md. Adding a project here is optional: anything not
-# listed falls back to the defaults below.
+# The key is the repository name, the same convention as org-team-mapping.yml.
+# Anything a project does not set falls back to `defaults`.
+#
+#   platform    which claude-guidelines/<platform>.md is loaded
+#   model       passed to --model
+#   effort      passed to --effort: low | medium | high | xhigh | max
+#   max-turns   turn budget; the ceiling on what one review can spend
+#
+# On effort: `high` is the balance point between quality and token spend.
+# Raise to `xhigh` where a mistake is expensive to walk back -- code that
+# ships to devices that update slowly, or that every platform depends on.
+# `max` only when correctness outweighs cost outright.
 # ============================================================================
 
 defaults:
   platform: generic
+  model: claude-sonnet-5
+  effort: high
+  max-turns: 25
 
 projects:
   smart-tv:
@@ -39,7 +52,8 @@ projects:
 
   magellantv-encoder:
     platform: backend
-    description: "Encoding and media processing services"
+    effort: xhigh
+    description: "Encoding and media processing - a bad ladder or manifest change reaches every device at once"
 
   magellantv_dev_ci:
     platform: backend

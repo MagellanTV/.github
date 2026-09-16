@@ -98,11 +98,17 @@ Both paths run the same reusable workflow, so the review behaves identically.
 | Review policy, severity, output format | `claude-guidelines/_org.md` |
 | Platform checklist | `claude-guidelines/<platform>.md` |
 | Platform per project | `org-claude-config.yml` |
-| Model, turn budget, draft handling | inputs in `org-claude-review.yml` |
+| Model, effort, turn budget | `org-claude-config.yml` (`defaults`, or per project) |
 | Which events trigger a review | `on:` block in the caller |
 | Paths that never trigger a review | `paths-ignore` in the caller |
 
-Skip a single pull request with the **`skip-claude-review`** label.
+Skip a single pull request with the **`skip-claude-review`** label. Label one
+**`claude-debug`** to get the full SDK transcript in the run log.
+
+Findings land as **inline comments on the offending line**; the single top-level
+comment is a verdict plus an index pointing at them. `track_progress` is off on
+purpose — it hands the summary comment to the action, which prepends a header
+no input can remove.
 
 Reviews run on `opened`, `ready_for_review` and `reopened` — deliberately not on
 every push, so a PR is reviewed once rather than once per commit.
