@@ -17,6 +17,7 @@ policy live here; consumer repositories carry only a thin caller.
 | `claude-guidelines/` | Review policy and platform checklists |
 | `claude-review.caller.yml` | Template to copy into a consumer repository |
 | `scripts/rollout-claude-review.sh` | Opens the caller PR across repositories |
+| `rulesets/` + `scripts/apply-org-rulesets.sh` | Organization-level branch protection, ready to apply |
 | `ONBOARDING.md` | How to enable the review on a new repository, and troubleshooting |
 
 ---
