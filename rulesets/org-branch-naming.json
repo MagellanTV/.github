@@ -4,11 +4,15 @@
   "enforcement": "evaluate",
   "conditions": {
     "repository_name": {
-      "include": ["~ALL"],
-      "exclude": [".github"]
+      "include": [
+        "~ALL"
+      ],
+      "exclude": []
     },
     "ref_name": {
-      "include": ["~ALL"],
+      "include": [
+        "~ALL"
+      ],
       "exclude": [
         "refs/heads/feature/*",
         "refs/heads/fix/*",
@@ -23,9 +27,9 @@
     }
   },
   "rules": [
-    { "type": "creation" }
+    {
+      "type": "creation"
+    }
   ],
-  "bypass_actors": [
-    { "actor_id": null, "actor_type": "OrganizationAdmin", "bypass_mode": "always" }
-  ]
+  "bypass_actors": []
 }

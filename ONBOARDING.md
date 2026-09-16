@@ -198,10 +198,24 @@ updates by ruleset name so rerunning is safe. It needs `admin:org`
 organization administration — members, teams, webhooks, org secrets — not just
 rulesets. Worth weighing against five minutes in the UI.
 
-Note the extra exclusions versus `smart-tv`'s copy: `master`, `legacy` and
-`legacy-develop` are default branches elsewhere in the org, and `apple-tv` also
-carries branches like `VRT-2067-danfelix` and `bug/VRT-1960` that the naming
-rule would reject. That is what Evaluate mode is for.
+**No repository is excluded.** Both rules apply to every repository in the org,
+including this one.
+
+**Who can bypass**, mirroring `smart-tv`:
+
+| Ruleset | Bypass |
+|---|---|
+| Branch Naming Convention | Nobody |
+| PR Approvals | Organization admins, and repository role 5 (admin) |
+
+`actor_id` is `null` on the `OrganizationAdmin` entry on purpose — GitHub's
+schema says it is ignored for that actor type, and this is the shape the API
+returns for the live `smart-tv` ruleset.
+
+Note the extra branch exclusions versus `smart-tv`'s copy: `master`, `legacy`
+and `legacy-develop` are default branches elsewhere in the org, and `apple-tv`
+also carries branches like `VRT-2067-danfelix` and `bug/VRT-1960` that the
+naming rule would reject. That is what Evaluate mode is for.
 
 Both files ship as **Evaluate**. It records what *would* have been blocked
 without blocking anything, which is the only safe way to find out whether a
