@@ -72,9 +72,14 @@ jobs:
       contents: read
       pull-requests: write
       id-token: write
-      # Lets Claude read CI status on the pull request. Without it the
-      # github_ci MCP server is skipped with a warning.
-      actions: read
+      # NOTE: a called workflow cannot request a permission its caller did not
+      # grant -- GitHub rejects the run with startup_failure before any step
+      # runs. Keep this list in sync with claude-review.caller.yml, and expect
+      # to update every consumer's caller before adding anything here.
+      #
+      # 'actions: read' would let Claude read CI status on the PR it reviews
+      # (the github_ci MCP server). It is deliberately left out: enabling it
+      # means touching every caller, on both main and the open release branch.
 
     steps:
       - name: Checkout pull request branch
@@ -127,8 +132,6 @@ jobs:
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           track_progress: true
-          additional_permissions: |
-            actions: read
           # The SDK hides its output by default, which leaves a failed run
           # undiagnosable from the log. Label a pull request `claude-debug` and
           # rerun to get the full transcript. Registered secrets are masked by
