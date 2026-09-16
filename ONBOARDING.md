@@ -164,9 +164,17 @@ willing to see echoed into the run log.
 
 ## Unifying rulesets across the organization
 
-Branch protection is currently per repository and inconsistent — of twelve
-active repositories, five have **Branch Naming Convention** and two have
-**PR Approvals**. Nothing enforces the rest.
+Branch protection is currently per repository and inconsistent. Of the twelve
+reachable repositories — `org-claude-config.yml` lists thirteen, but
+`magellantv-app-config` currently returns 404 — **six** have
+**Branch Naming Convention** and **two** have **PR Approvals**. Nothing
+enforces the other six.
+
+| Rulesets | Repositories |
+|---|---|
+| Branch Naming + PR Approvals | `smart-tv`, `magellantv-android` |
+| Branch Naming only | `magellantv_roku`, `magellantv-ios`, `magellantv-backend`, `magellantv-web` |
+| None | `apple-tv`, `magellantv-encoder`, `magellantv-aspera-sync`, `magellan_analytics_kmp`, `workticket`, `FM_.xlsx_to_JSON` |
 
 **Organization rulesets are available on the Team plan** and fix this: define
 the rule once, target repositories by pattern, and every repository inherits it.
