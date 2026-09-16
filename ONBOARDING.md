@@ -213,13 +213,35 @@ schema says it is ignored for that actor type, and this is the shape the API
 returns for the live `smart-tv` ruleset.
 
 Note the extra branch exclusions versus `smart-tv`'s copy: `master`, `legacy`
-and `legacy-develop` are default branches elsewhere in the org, and `apple-tv`
-also carries branches like `VRT-2067-danfelix` and `bug/VRT-1960` that the
-naming rule would reject. That is what Evaluate mode is for.
+and `legacy-develop` are default branches elsewhere in the org.
 
-Both files ship as **Evaluate**. It records what *would* have been blocked
-without blocking anything, which is the only safe way to find out whether a
-rule breaks someone's workflow. Move to **Active** once the evaluation is quiet.
+### Evaluate mode does not exist on this plan
+
+**Evaluate is Enterprise Cloud only.** The trap is that the REST API accepts
+`"enforcement": "evaluate"` on a Team plan and stores it without complaint —
+but the ruleset then applies to nothing. It does not enforce, and it does not
+record insights either. `GET /repos/{owner}/{repo}/rules/branches/{branch}`
+returns no rules from the organization, which is how to tell.
+
+So there is no trial period. A rule is either inert or live on everybody.
+
+### Measure before you flip
+
+`./scripts/ruleset-impact.sh` is the stand-in for Insights. It reads the
+allowed prefixes straight out of `rulesets/org-branch-naming.json` and reports
+what they would block across every branch in the org, and separately across the
+head branches of recent pull requests.
+
+The gap between those two numbers is the whole point. When this was first run:
+
+| Sample | Blocked |
+|---|---|
+| All 1591 branches | 23% |
+| Head branches of the last ~25 PRs per repo | 4% |
+
+The 23% is years of abandoned branches — 139 on `feat/`, 55 on `bugfix/`, plus
+`bug/`, `task/`, `story/`, `ADHOC/`, `RC/`. Recent work has converged on
+`feature/` and `fix/`. Judge a naming rule on the second number.
 
 Org rulesets are additive to repository rulesets — the strictest rule wins, and
 neither replaces the other. Delete the per-repo copies only after the org rule
