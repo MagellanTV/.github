@@ -72,6 +72,9 @@ jobs:
       contents: read
       pull-requests: write
       id-token: write
+      # Lets Claude read CI status on the pull request. Without it the
+      # github_ci MCP server is skipped with a warning.
+      actions: read
 
     steps:
       - name: Checkout pull request branch
@@ -124,6 +127,14 @@ jobs:
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           track_progress: true
+          additional_permissions: |
+            actions: read
+          # The SDK hides its output by default, which leaves a failed run
+          # undiagnosable from the log. Label a pull request `claude-debug` and
+          # rerun to get the full transcript. Registered secrets are masked by
+          # Actions, but tool results are not, so use it on a diff you are
+          # willing to see echoed into the run log.
+          show_full_output: ${{ contains(github.event.pull_request.labels.*.name, 'claude-debug') }}
           prompt: |
             REPO: ${{ github.repository }}
             PR NUMBER: ${{ github.event.pull_request.number }}
