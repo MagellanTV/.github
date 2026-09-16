@@ -1,8 +1,19 @@
 # ============================================================================
-# CLAUDE PR REVIEW - RULESET ENTRYPOINT (GitHub Enterprise Cloud only)
+# CLAUDE PR REVIEW - RULESET ENTRYPOINT
 # ============================================================================
-# This file exists so the review can be enforced org-wide WITHOUT adding any
-# file to the consumer repositories.
+# NOT IN USE. The "Require workflows to pass before merging" rule is GitHub
+# Enterprise Cloud only, and MagellanTV is on the Team plan. Nothing below
+# takes effect until the org upgrades; the per-repo caller is what actually
+# runs the review today.
+#
+# Kept because it costs nothing and is the whole answer if we ever do upgrade.
+#
+# One side effect worth knowing: this file sits in .github/workflows/ of the
+# org repo, so it DOES run on this repository's own pull requests. That is why
+# changes to the org config get reviewed without a caller here.
+# ----------------------------------------------------------------------------
+# If the org moves to Enterprise Cloud, this enforces the review org-wide
+# WITHOUT adding any file to the consumer repositories.
 #
 # Organization settings -> Rulesets -> New ruleset -> Target: repositories
 #   Rule: "Require workflows to pass before merging"

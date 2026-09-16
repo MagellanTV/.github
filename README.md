@@ -60,14 +60,24 @@ judges it. Two consequences:
 - **The PR that adds `claude-review.yml` cannot review itself.** Merge it, then
   open any ordinary pull request to see the review run.
 - **Changes to `claude-review.yml` skip the review** until they land on the
-  default branch. Changes to the files in *this* repository take effect
-  immediately, since the reusable workflow is checked out at `main` on every run.
+  default branch.
+
+The guard checks *the workflow file GitHub is running* — the caller, or
+`org-claude-review-ruleset.yml` in this repository — and nothing else. A PR
+that edits `org-claude-review.yml`, the guidelines or the config is still
+reviewed, because the reusable workflow is checked out at `main` on every run
+and is not what GitHub validates. A PR that edits the entrypoint is skipped.
 
 Keep the caller identical to `claude-review.caller.yml` and do the tuning here.
 
 ### Enabling it org-wide without touching repositories
 
-On GitHub Enterprise Cloud, an organization ruleset can run the workflow across
+**Not available today.** The rule below is GitHub Enterprise Cloud only and the
+organization is on the **Team** plan, so `org-claude-review-ruleset.yml` is
+inert. The per-repo caller is what runs the review. Kept documented in case the
+org upgrades.
+
+On Enterprise Cloud, an organization ruleset can run the workflow across
 repositories with no file in any of them:
 
 > Organization settings → Rulesets → New ruleset → Target: repositories
