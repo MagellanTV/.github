@@ -12,7 +12,7 @@
 set -euo pipefail
 
 ORG="MagellanTV"
-BRANCH="ci/claude-pr-review"
+BRANCH="feature/claude-pr-review"
 TEMPLATE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/claude-review.caller.yml"
 DRY_RUN="${DRY_RUN:-0}"
 

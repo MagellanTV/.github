@@ -42,6 +42,29 @@ DRY_RUN=1 ./scripts/rollout-claude-review.sh smart-tv   # preview
 ./scripts/rollout-claude-review.sh smart-tv             # opens a PR
 ```
 
+The script branches as `feature/claude-pr-review`, because several repositories
+run a Branch Naming Convention ruleset that only allows `feature/`, `fix/`,
+`hotfix/` and `release/` prefixes.
+
+### The caller must be on the default branch first
+
+`claude-code-action` refuses to run when the workflow file on the pull request
+differs from the version on the repository's default branch:
+
+> Workflow validation failed. The workflow file must exist and have identical
+> content to the version on the repository's default branch.
+
+That is a deliberate guard against a pull request rewriting the review that
+judges it. Two consequences:
+
+- **The PR that adds `claude-review.yml` cannot review itself.** Merge it, then
+  open any ordinary pull request to see the review run.
+- **Changes to `claude-review.yml` skip the review** until they land on the
+  default branch. Changes to the files in *this* repository take effect
+  immediately, since the reusable workflow is checked out at `main` on every run.
+
+Keep the caller identical to `claude-review.caller.yml` and do the tuning here.
+
 ### Enabling it org-wide without touching repositories
 
 On GitHub Enterprise Cloud, an organization ruleset can run the workflow across
