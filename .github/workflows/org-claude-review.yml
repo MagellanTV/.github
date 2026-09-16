@@ -143,7 +143,7 @@ jobs:
           platform = resolve('platform', 'PLATFORM_OVERRIDE', 'generic')
           model = resolve('model', 'MODEL_OVERRIDE', 'claude-sonnet-5')
           effort = resolve('effort', 'EFFORT_OVERRIDE', 'high')
-          max_turns = resolve('max-turns', 'MAX_TURNS_OVERRIDE', '25')
+          max_turns = resolve('max-turns', 'MAX_TURNS_OVERRIDE', '60')
 
           VALID_EFFORT = {'low', 'medium', 'high', 'xhigh', 'max'}
           if effort not in VALID_EFFORT:
@@ -228,8 +228,20 @@ jobs:
 
             Review only what this PR changes.
 
+            If the diff is very large -- hundreds of files, or a branch merge
+            swept in alongside the real change -- do not try to read all of it.
+            Work out which files carry the intent of the PR, review those, and
+            say plainly in the summary what you covered and what you skipped.
+            A focused review of the twenty files that matter beats running out
+            of budget on file two hundred and posting nothing at all.
+
+          # Every tool here is read-only. The first version allowed only Read,
+          # Glob, Grep and three `gh pr` commands; a review of a 225-file
+          # Android PR spent 13 of its 26 turns on denied tool calls and posted
+          # nothing. A reviewer reaches for `git diff` and `ls` -- denying
+          # those does not make the run safer, it makes it fail.
           claude_args: |
-            --allowedTools "Read,Glob,Grep,mcp__github_inline_comment__create_inline_comment,Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr comment:*)"
+            --allowedTools "Read,Glob,Grep,mcp__github_inline_comment__create_inline_comment,Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr comment:*),Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git status:*),Bash(ls:*),Bash(find:*),Bash(cat:*),Bash(head:*),Bash(tail:*),Bash(wc:*),Bash(grep:*),Bash(rg:*)"
             --model ${{ steps.profile.outputs.model }}
             --effort ${{ steps.profile.outputs.effort }}
             --max-turns ${{ steps.profile.outputs.max_turns }}

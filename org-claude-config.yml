@@ -16,7 +16,10 @@
 #   platform    which claude-guidelines/<platform>.md is loaded
 #   model       passed to --model
 #   effort      passed to --effort: low | medium | high | xhigh | max
-#   max-turns   turn budget; the ceiling on what one review can spend
+#   max-turns   turn budget; the ceiling on what one review can spend.
+#               Mind the floor: every inline comment is one turn, and _org.md
+#               allows up to 15, on top of ~5 turns of mandatory reading. A
+#               budget under ~25 cannot finish a review that finds anything.
 #
 # On effort: `high` is the balance point between quality and token spend.
 # Raise to `xhigh` where a mistake is expensive to walk back -- code that
@@ -28,7 +31,7 @@ defaults:
   platform: generic
   model: claude-sonnet-5
   effort: high
-  max-turns: 25
+  max-turns: 60
 
 projects:
 
