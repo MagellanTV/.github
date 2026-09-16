@@ -1,7 +1,7 @@
 {
   "name": "Branch Naming Convention",
   "target": "branch",
-  "enforcement": "evaluate",
+  "enforcement": "active",
   "conditions": {
     "repository_name": {
       "include": [

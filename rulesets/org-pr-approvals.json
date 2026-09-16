@@ -1,7 +1,7 @@
 {
   "name": "PR Approvals",
   "target": "branch",
-  "enforcement": "evaluate",
+  "enforcement": "active",
   "conditions": {
     "repository_name": {
       "include": [
