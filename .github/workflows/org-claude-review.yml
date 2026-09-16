@@ -160,12 +160,18 @@ jobs:
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          # track_progress is deliberately off. It makes the action own the
-          # summary comment, and it prepends a hardcoded header --
-          # "**Claude finished @user's task in Ns** —— [View job]" plus a rule --
-          # that no input can disable (see comment-logic.ts in the action).
-          # With it off, Claude posts the comment itself through `gh pr comment`
-          # and the body is exactly what the guidelines ask for.
+          # track_progress makes the action own the summary comment, and it
+          # prepends a hardcoded header -- "**Claude finished @user's task in
+          # Ns** —— [View job]" plus a rule -- that no input can disable (see
+          # comment-logic.ts in the action). Off, Claude posts the comment
+          # itself through `gh pr comment` and the body is exactly what the
+          # guidelines ask for.
+          #
+          # Set explicitly rather than left to the action's default. That
+          # default is false today, but this line exists to guarantee the
+          # header is gone, so it should say so rather than depend on it.
+          track_progress: false
+
           # The SDK hides its output by default, which leaves a failed run
           # undiagnosable from the log. Label a pull request `claude-debug` and
           # rerun to get the full transcript. Registered secrets are masked by
