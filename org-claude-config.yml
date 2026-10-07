@@ -20,6 +20,10 @@
 #               Mind the floor: every inline comment is one turn, and _org.md
 #               allows up to 15, on top of ~5 turns of mandatory reading. A
 #               budget under ~25 cannot finish a review that finds anything.
+#               The prompt is told this number and paces itself against it, so
+#               running out now truncates a review rather than losing it. Raise
+#               it for a repository whose reviews keep reporting that they
+#               skipped most of the diff -- not before.
 #
 # On effort: `high` is the balance point between quality and token spend.
 # Raise to `xhigh` where a mistake is expensive to walk back -- code that

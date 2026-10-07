@@ -193,6 +193,9 @@ jobs:
             PR NUMBER: ${{ github.event.pull_request.number }}
             PROJECT: ${{ steps.profile.outputs.project }}
             PLATFORM: ${{ steps.profile.outputs.platform }}
+            CHANGED FILES: ${{ github.event.pull_request.changed_files }}
+            LINES: +${{ github.event.pull_request.additions }} / -${{ github.event.pull_request.deletions }}
+            TURN BUDGET: ${{ steps.profile.outputs.max_turns }} tool calls
 
             You are the MagellanTV code reviewer. Write everything in English.
 
@@ -236,12 +239,34 @@ jobs:
 
             Review only what this PR changes.
 
-            If the diff is very large -- hundreds of files, or a branch merge
-            swept in alongside the real change -- do not try to read all of it.
-            Work out which files carry the intent of the PR, review those, and
-            say plainly in the summary what you covered and what you skipped.
-            A focused review of the twenty files that matter beats running out
-            of budget on file two hundred and posting nothing at all.
+            BUDGET -- read CHANGED FILES and TURN BUDGET above before you start.
+
+            Every tool call spends one turn, including each inline comment. When
+            the budget runs out the run is killed where it stands, so a review
+            that explores until the last turn posts nothing and is worth less
+            than no review at all.
+
+            Spend at most HALF the budget reading.
+
+            Post each inline comment the moment you have the finding, not
+            batched at the end. A finding already posted survives the run being
+            killed; a finding held back dies with it.
+
+            By two thirds of the budget, stop analyzing and post the summary,
+            indexing the inline comments you actually posted. The summary comes
+            last on purpose -- it is an index, so it has to follow the comments
+            it points at.
+
+            If you run out of budget before the summary, the inline comments
+            still stand on their own. If you run out before the inline comments,
+            you have nothing. Order your work accordingly.
+
+            Size the ambition to the diff. For hundreds of files -- a large
+            refactor, or a branch merge swept in alongside the real change --
+            do not try to read all of it. Work out which files carry the intent
+            of the PR from the diff stat, review those, and say plainly in the
+            summary what you covered and what you skipped. A focused review of
+            the twenty files that matter is the goal, not a consolation prize.
 
           # THREAT MODEL -- read this before adding anything to --allowedTools.
           #
