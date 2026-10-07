@@ -187,7 +187,17 @@ jobs:
           # rerun to get the full transcript. Registered secrets are masked by
           # Actions, but tool results are not, so use it on a diff you are
           # willing to see echoed into the run log.
-          show_full_output: ${{ contains(github.event.pull_request.labels.*.name, 'claude-debug') }}
+          #
+          # The organization variable CLAUDE_DEBUG turns it on everywhere
+          # without a label and without a merge, so a failing run can be
+          # re-run with full output instead of waiting for the next failure:
+          #
+          #   gh api --method PATCH orgs/MagellanTV/actions/variables/CLAUDE_DEBUG -f value=true
+          #   gh run rerun <id>            # re-resolves this workflow from main
+          #   gh api --method PATCH orgs/MagellanTV/actions/variables/CLAUDE_DEBUG -f value=false
+          #
+          # Turn it off again when you have what you need.
+          show_full_output: ${{ contains(github.event.pull_request.labels.*.name, 'claude-debug') || vars.CLAUDE_DEBUG == 'true' }}
           prompt: |
             REPO: ${{ github.repository }}
             PR NUMBER: ${{ github.event.pull_request.number }}
