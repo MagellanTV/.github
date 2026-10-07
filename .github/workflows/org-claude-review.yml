@@ -249,6 +249,29 @@ jobs:
 
             Review only what this PR changes.
 
+            HOW YOUR SANDBOX WORKS -- learn this here, not by spending turns on it.
+
+            Bash commands are checked against an allowlist one command at a time.
+            A denied call still costs a turn, and on a measured run twelve of
+            sixty turns died this way. Specifically:
+
+            - ONE command per call. No pipes, no `&&`, no `;`, no subshells.
+              A pipeline is rejected whole if any part of it is not allowed, so
+              `gh pr diff --name-only | head -40` fails on `head`. Run
+              `gh pr diff ${{ github.event.pull_request.number }} --name-only`
+              and read the output.
+            - You cannot write anything. No `>` redirection, no `mkdir`, no temp
+              files, not in the workspace and not in /tmp. Hold intermediate
+              results in your head or in the comments you post.
+            - `gh api` is not available. For the file list with sizes use
+              `gh pr view ${{ github.event.pull_request.number }} --json files`.
+              For the diff use `gh pr diff`.
+            - For reading, globbing and searching files use the Read, Glob and
+              Grep tools, never `cat`, `head`, `tail`, `find`, `grep` or `rg`.
+              The shell versions are not allowed and will not become allowed:
+              they can read any path on the runner, and this job posts to a
+              public comment.
+
             BUDGET -- read CHANGED FILES and TURN BUDGET above before you start.
 
             Every tool call spends one turn, including each inline comment. When
