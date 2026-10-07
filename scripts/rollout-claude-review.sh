@@ -6,13 +6,21 @@
 #   ./scripts/rollout-claude-review.sh smart-tv newui-web magellantv_roku
 #   DRY_RUN=1 ./scripts/rollout-claude-review.sh smart-tv
 #
+# A repository whose caller already matches the template is skipped; one whose
+# caller has drifted, or predates a template change, is updated. Override the
+# branch and the wording for a retrofit:
+#
+#   ROLLOUT_BRANCH=feature/claude-review-synchronize \
+#   COMMIT_SUBJECT="re-review on every push" \
+#   COMMIT_BODY="..." PR_INTRO="..." ./scripts/rollout-claude-review.sh <repos>
+#
 # Opens a pull request per repository. Nothing is merged automatically.
 # Requires: gh, authenticated with write access to the target repositories.
 # ============================================================================
 set -euo pipefail
 
 ORG="MagellanTV"
-BRANCH="feature/claude-pr-review"
+BRANCH="${ROLLOUT_BRANCH:-feature/claude-pr-review}"
 
 # SSH host to clone through. Defaults to the `MagellanTV` alias, because these
 # repositories are normally cloned that way and the alias selects the key with
@@ -45,9 +53,20 @@ for repo in "$@"; do
     continue
   fi
 
-  if gh api "repos/$ORG/$repo/contents/.github/workflows/claude-review.yml" >/dev/null 2>&1; then
-    echo "    skipped: claude-review.yml already exists"
-    continue
+  # Three cases: no caller yet (add it), a caller that already matches the
+  # template (nothing to do), or a caller that has drifted or predates a
+  # template change (update it). The third is what a retrofit looks like, and
+  # the script used to treat it as the second and quietly do nothing.
+  remote_b64="$(gh api "repos/$ORG/$repo/contents/.github/workflows/claude-review.yml" --jq '.content' 2>/dev/null | tr -d '\n' || true)"
+  if [ -n "$remote_b64" ]; then
+    if [ "$(echo "$remote_b64" | base64 -d 2>/dev/null | shasum -a 256 | cut -d' ' -f1)" \
+       = "$(shasum -a 256 < "$TEMPLATE" | cut -d' ' -f1)" ]; then
+      echo "    skipped: caller already matches the template"
+      continue
+    fi
+    action_verb="update"
+  else
+    action_verb="add"
   fi
 
   if git ls-remote --exit-code --heads "git@${GIT_HOST}:${ORG}/${repo}.git" "$BRANCH" >/dev/null 2>&1; then
@@ -56,7 +75,7 @@ for repo in "$@"; do
   fi
 
   if [ "$DRY_RUN" = "1" ]; then
-    echo "    dry run: would add .github/workflows/claude-review.yml and open a PR"
+    echo "    dry run: would $action_verb .github/workflows/claude-review.yml and open a PR"
     continue
   fi
 
@@ -70,11 +89,11 @@ for repo in "$@"; do
     mkdir -p .github/workflows
     cp "$TEMPLATE" .github/workflows/claude-review.yml
     git add .github/workflows/claude-review.yml
-    git commit -q -m "ci: enable organization Claude PR review
+    git commit -q -m "ci: ${COMMIT_SUBJECT:-enable organization Claude PR review}
 
-Adds the caller for MagellanTV/.github/.github/workflows/org-claude-review.yml.
+${COMMIT_BODY:-Adds the caller for MagellanTV/.github/.github/workflows/org-claude-review.yml.
 Prompt, review guidelines, model and cost controls stay centralized in the
-organization .github repository."
+organization .github repository.}"
     git push -q -u origin "$BRANCH"
     # --repo and --head are explicit because the remote is an SSH alias that gh
     # cannot resolve back to a GitHub repository on its own.
@@ -82,8 +101,8 @@ organization .github repository."
       --repo "$ORG/$repo" \
       --head "$BRANCH" \
       --base "$base" \
-      --title "ci: enable organization Claude PR review" \
-      --body "Adds the caller workflow for the organization-wide Claude PR review.
+      --title "ci: ${COMMIT_SUBJECT:-enable organization Claude PR review}" \
+      --body "${PR_INTRO:-Adds the caller workflow for the organization-wide Claude PR review.}
 
 All configuration lives in [MagellanTV/.github](https://github.com/MagellanTV/.github):
 
