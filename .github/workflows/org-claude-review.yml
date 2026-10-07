@@ -167,6 +167,7 @@ jobs:
           PYTHON_EOF
 
       - name: Claude review
+        id: claude
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
@@ -343,3 +344,95 @@ jobs:
             --model ${{ steps.profile.outputs.model }}
             --effort ${{ steps.profile.outputs.effort }}
             --max-turns ${{ steps.profile.outputs.max_turns }}
+
+      # Turns, tokens and denials for every run, including failed ones -- the
+      # action only reveals them with show_full_output, which prints the whole
+      # transcript and is not something to leave on. This reads the execution
+      # file the action already writes and puts the numbers in the job summary,
+      # where they cost nothing and are there when a run misbehaves.
+      - name: Record usage
+        if: always()
+        env:
+          EXECUTION_FILE: ${{ steps.claude.outputs.execution_file }}
+          REVIEW_MODEL: ${{ steps.profile.outputs.model }}
+          REVIEW_EFFORT: ${{ steps.profile.outputs.effort }}
+          REVIEW_MAX_TURNS: ${{ steps.profile.outputs.max_turns }}
+        run: |
+          python3 << 'PYTHON_EOF'
+          import json
+          import os
+
+          path = os.environ.get('EXECUTION_FILE', '')
+          summary = os.environ.get('GITHUB_STEP_SUMMARY')
+
+          def emit(text):
+              print(text)
+              if summary:
+                  with open(summary, 'a', encoding='utf-8') as f:
+                      f.write(text + '\n')
+
+          if not path or not os.path.exists(path):
+              emit('### Claude review usage\n\nNo execution file -- the run ended before Claude started.')
+              raise SystemExit(0)
+
+          with open(path, encoding='utf-8') as f:
+              raw = f.read()
+
+          # The action has written this as both a JSON array and a stream of
+          # objects across versions; accept either rather than break on an upgrade.
+          messages = []
+          try:
+              loaded = json.loads(raw)
+              messages = loaded if isinstance(loaded, list) else [loaded]
+          except json.JSONDecodeError:
+              for line in raw.splitlines():
+                  line = line.strip()
+                  if line.startswith('{'):
+                      try:
+                          messages.append(json.loads(line))
+                      except json.JSONDecodeError:
+                          pass
+
+          result = next((m for m in reversed(messages) if m.get('type') == 'result'), None)
+          if result is None:
+              emit('### Claude review usage\n\nNo result message in the execution file.')
+              raise SystemExit(0)
+
+          turns = result.get('num_turns', 0)
+          budget = os.environ.get('REVIEW_MAX_TURNS', '?')
+          denials = result.get('permission_denials_count', 0)
+          outcome = result.get('subtype', 'unknown')
+
+          rows = [
+              ('Outcome', outcome),
+              ('Model', os.environ.get('REVIEW_MODEL', '?')),
+              ('Effort', os.environ.get('REVIEW_EFFORT', '?')),
+              ('Turns', f"{turns} / {budget}"),
+              ('Denied tool calls', str(denials)),
+              ('Duration', f"{result.get('duration_ms', 0) / 1000:.0f}s"),
+              ('API-equivalent', f"${result.get('total_cost_usd', 0):.2f}"),
+          ]
+
+          lines = ['### Claude review usage', '', '| | |', '|---|---|']
+          lines += [f'| {k} | {v} |' for k, v in rows]
+
+          usage = result.get('modelUsage') or {}
+          if usage:
+              lines += ['', '| Model | Input | Output | Cache read | Cache write |',
+                        '|---|---:|---:|---:|---:|']
+              for model, u in usage.items():
+                  lines.append(
+                      f"| `{model}` | {u.get('inputTokens', 0):,} | {u.get('outputTokens', 0):,} "
+                      f"| {u.get('cacheReadInputTokens', 0):,} | {u.get('cacheCreationInputTokens', 0):,} |"
+                  )
+
+          # Denials are the budget leak that cost three rounds of guesswork to
+          # find. Make a bad ratio visible without anyone going to look for it.
+          if denials and turns:
+              share = 100 * denials / turns
+              if share >= 10:
+                  lines += ['', f'> **{denials} of {turns} turns ({share:.0f}%) were denied tool calls.** '
+                                'Set the org variable CLAUDE_DEBUG and re-run to see which.']
+
+          emit('\n'.join(lines))
+          PYTHON_EOF
