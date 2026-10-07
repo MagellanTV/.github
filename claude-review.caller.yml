@@ -12,6 +12,11 @@
 #   - Organization secret CLAUDE_CODE_OAUTH_TOKEN, visible to this repository
 #   - The Claude GitHub App installed on the organization
 #
+# `synchronize` means a re-review on every push. That is not as expensive as it
+# sounds: the second and later reviews run incrementally, covering only what
+# changed since the previous one, and a push that leaves the head unchanged is
+# skipped outright. Concurrency cancels a run that a newer push supersedes.
+#
 # Optional per-repo overrides, all of them defaulted centrally:
 #   platform:      roku | android | smarttv | web | apple | backend | generic
 #   model:         pin a model for this repository only
@@ -23,7 +28,7 @@ name: Claude PR Review
 
 on:
   pull_request:
-    types: [opened, ready_for_review, reopened]
+    types: [opened, ready_for_review, reopened, synchronize]
     paths-ignore:
       - '**/*.md'
       - 'docs/**'
