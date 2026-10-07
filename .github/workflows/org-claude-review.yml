@@ -255,6 +255,10 @@ jobs:
             A denied call still costs a turn, and on a measured run twelve of
             sixty turns died this way. Specifically:
 
+            - The checkout is SHALLOW -- `fetch-depth: 1`, one commit, no
+              history and no base ref. `git diff`, `git log`, `git show` and
+              `git status` cannot tell you anything here and are not allowed.
+              The diff comes from `gh pr diff`; file contents come from Read.
             - ONE command per call. No pipes, no `&&`, no `;`, no subshells.
               A pipeline is rejected whole if any part of it is not allowed, so
               `gh pr diff --name-only | head -40` fails on `head`. Run
@@ -323,16 +327,19 @@ jobs:
           #
           # So file reading, globbing and content search go through Read, Glob
           # and Grep, which are scoped, and never through cat/head/tail/grep/rg,
-          # which are not. What is left is `git` history inspection and `ls`,
-          # neither of which has an exec path and neither of which is covered by
-          # another tool.
+          # which are not. What is left in the shell is `ls` and the three
+          # `gh pr` subcommands.
           #
-          # The narrow version of this list was not free either: it allowed only
-          # Read, Glob, Grep and three `gh pr` commands, and a 225-file Android
-          # review spent 13 of its 26 turns on denials and posted nothing. The
-          # answer to that is the git tools below, not a wider shell.
+          # git diff/log/show/status were allowed here for a while, on the
+          # theory that a 225-file Android review had failed for want of them.
+          # That was wrong: this job checks out at fetch-depth 1, so there is no
+          # history and no base ref and all four return nothing. They were dead
+          # weight, and worse, something for the model to spend turns on. The
+          # real answer to that failure was never more shell -- it was telling
+          # the model the rules it was discovering by trial, which the prompt
+          # now does.
           claude_args: |
-            --allowedTools "Read,Glob,Grep,mcp__github_inline_comment__create_inline_comment,Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr comment:*),Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git status:*),Bash(ls:*)"
+            --allowedTools "Read,Glob,Grep,mcp__github_inline_comment__create_inline_comment,Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr comment:*),Bash(ls:*)"
             --model ${{ steps.profile.outputs.model }}
             --effort ${{ steps.profile.outputs.effort }}
             --max-turns ${{ steps.profile.outputs.max_turns }}
