@@ -246,15 +246,20 @@ jobs:
             that explores until the last turn posts nothing and is worth less
             than no review at all.
 
-            Spend at most HALF the budget reading. By the halfway point you must
-            have started posting. If you are near the end, stop analyzing
-            immediately and post the summary with what you have -- a partial
-            review that says what it covered is useful; a perfect review that
-            never gets posted is not.
+            Spend at most HALF the budget reading.
 
-            Post the summary comment BEFORE you have used two thirds of the
-            budget, then add inline comments with what is left. You can always
-            edit the summary afterwards if the inline pass changes the verdict.
+            Post each inline comment the moment you have the finding, not
+            batched at the end. A finding already posted survives the run being
+            killed; a finding held back dies with it.
+
+            By two thirds of the budget, stop analyzing and post the summary,
+            indexing the inline comments you actually posted. The summary comes
+            last on purpose -- it is an index, so it has to follow the comments
+            it points at.
+
+            If you run out of budget before the summary, the inline comments
+            still stand on their own. If you run out before the inline comments,
+            you have nothing. Order your work accordingly.
 
             Size the ambition to the diff. For hundreds of files -- a large
             refactor, or a branch merge swept in alongside the real change --
