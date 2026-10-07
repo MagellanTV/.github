@@ -257,7 +257,8 @@ jobs:
 
             - ONE command per call. No pipes, no `&&`, no `;`, no subshells.
               A pipeline is rejected whole if any part of it is not allowed, so
-              `git diff --stat | head -40` fails on `head`. Run `git diff --stat`
+              `gh pr diff --name-only | head -40` fails on `head`. Run
+              `gh pr diff ${{ github.event.pull_request.number }} --name-only`
               and read the output.
             - You cannot write anything. No `>` redirection, no `mkdir`, no temp
               files, not in the workspace and not in /tmp. Hold intermediate
