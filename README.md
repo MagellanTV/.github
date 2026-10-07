@@ -120,6 +120,11 @@ Both paths run the same reusable workflow, so the review behaves identically.
 Skip a single pull request with the **`skip-claude-review`** label. Label one
 **`claude-debug`** to get the full SDK transcript in the run log.
 
+On a follow-up review, threads whose point the developer has addressed are
+resolved automatically. Claude names the ids in its summary and a workflow step
+does the mutation, after re-checking each one is its own unresolved thread on
+that PR -- it never gets a GraphQL tool of its own.
+
 Findings land as **inline comments on the offending line**; the single top-level
 comment is a verdict plus an index pointing at them. `track_progress` is off on
 purpose — it hands the summary comment to the action, which prepends a header

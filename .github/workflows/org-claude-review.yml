@@ -249,6 +249,72 @@ jobs:
               f.write('\n'.join(files))
           PYTHON_EOF
 
+      # Claude cannot enumerate its own inline comments: `gh api` is not in its
+      # allowlist and will not be. So the threads are fetched here and handed to
+      # it as a file, which it can Read. It never needs a GraphQL tool.
+      - name: Collect open review threads
+        if: steps.mode.outputs.mode == 'incremental'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OWNER: ${{ github.repository_owner }}
+          NAME: ${{ github.event.repository.name }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          python3 << 'PYTHON_EOF'
+          import json
+          import os
+          import subprocess
+
+          query = """
+          query($owner:String!,$name:String!,$pr:Int!){
+            repository(owner:$owner,name:$name){
+              pullRequest(number:$pr){
+                reviewThreads(first:100){
+                  nodes{
+                    id isResolved isOutdated path line
+                    comments(first:1){ nodes{ author{login} body } }
+                  }
+                }
+              }
+            }
+          }
+          """
+
+          r = subprocess.run(
+              ['gh', 'api', 'graphql', '-f', f'query={query}',
+               '-F', f"owner={os.environ['OWNER']}", '-F', f"name={os.environ['NAME']}",
+               '-F', f"pr={os.environ['PR']}"],
+              capture_output=True, text=True)
+
+          threads = []
+          if r.returncode == 0:
+              try:
+                  nodes = json.loads(r.stdout)['data']['repository']['pullRequest']['reviewThreads']['nodes']
+              except (KeyError, TypeError, json.JSONDecodeError):
+                  nodes = []
+              for n in nodes:
+                  if n.get('isResolved'):
+                      continue
+                  first = (n.get('comments') or {}).get('nodes') or []
+                  if not first:
+                      continue
+                  if (first[0].get('author') or {}).get('login') != 'claude[bot]':
+                      continue
+                  threads.append({
+                      'id': n['id'],
+                      'path': n.get('path'),
+                      'line': n.get('line'),
+                      'outdated': n.get('isOutdated'),
+                      'comment': (first[0].get('body') or '')[:600],
+                  })
+          else:
+              print(f'Could not read review threads: {r.stderr.strip()[:200]}')
+
+          with open('.claude-open-threads.json', 'w', encoding='utf-8') as f:
+              json.dump(threads, f, indent=2)
+          print(f'{len(threads)} unresolved thread(s) from previous reviews')
+          PYTHON_EOF
+
       - name: Claude review
         id: claude
         if: steps.mode.outputs.mode != 'skip'
@@ -342,6 +408,28 @@ jobs:
             - If a push did NOT fix something you flagged and the code is still
               there, do not re-post it inline. Note it once in the summary as
               still open.
+
+            CLOSING THREADS YOU OPENED.
+
+            `.claude-open-threads.json` lists every inline comment of yours on
+            this PR that is still unresolved, each with an `id`, the file and
+            line, and what you said. Read it, then look at the current code at
+            each of those places.
+
+            For every one where the developer has actually addressed the point,
+            collect its `id`. Judge the code, not the intent: a thread is fixed
+            when the problem you described is no longer in the file. If the code
+            changed but the problem survives in another form, it is not fixed.
+            If you cannot tell, leave it open -- a human closes a thread in one
+            click, and reopening one you closed wrongly costs them a lot more.
+
+            Then put the ids in the summary, on their own line:
+
+                <!-- claude-resolved: <id>,<id>,<id> -->
+
+            Omit the line entirely when nothing is fixed. A later step resolves
+            exactly those threads and nothing else; it re-checks that each id is
+            one of your own threads on this PR before touching it.
             - Findings in the newly changed files are new work. Post those
               inline as usual.
 
@@ -467,6 +555,91 @@ jobs:
             --model ${{ steps.profile.outputs.model }}
             --effort ${{ steps.profile.outputs.effort }}
             --max-turns ${{ steps.profile.outputs.max_turns }}
+
+      # Resolves the threads Claude judged fixed. Deliberately a workflow step
+      # and not a tool: the mutation runs here, with the job's token, and
+      # Claude's whole influence is a list of ids in a comment. Every id is
+      # checked against a freshly fetched set of its own unresolved threads on
+      # this PR, so the worst a prompt injection can achieve is closing a thread
+      # that should have stayed open -- which a human reopens in one click.
+      - name: Resolve threads marked fixed
+        if: steps.mode.outputs.mode == 'incremental' && steps.claude.conclusion == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OWNER: ${{ github.repository_owner }}
+          NAME: ${{ github.event.repository.name }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          python3 << 'PYTHON_EOF'
+          import json
+          import os
+          import re
+          import subprocess
+
+          owner, name, pr = os.environ['OWNER'], os.environ['NAME'], os.environ['PR']
+
+          def gh(args):
+              r = subprocess.run(['gh'] + args, capture_output=True, text=True)
+              return r.stdout if r.returncode == 0 else None
+
+          raw = gh(['api', f'repos/{owner}/{name}/issues/{pr}/comments?per_page=100'])
+          claimed = []
+          if raw:
+              for c in json.loads(raw):
+                  if (c.get('user') or {}).get('login') != 'claude[bot]':
+                      continue
+                  m = re.search(r'<!--\s*claude-resolved:\s*([^>]*?)\s*-->', c.get('body') or '')
+                  if m:
+                      claimed = [i.strip() for i in m.group(1).split(',') if i.strip()]
+
+          if not claimed:
+              print('Nothing claimed as fixed.')
+              raise SystemExit(0)
+
+          query = """
+          query($owner:String!,$name:String!,$pr:Int!){
+            repository(owner:$owner,name:$name){
+              pullRequest(number:$pr){
+                reviewThreads(first:100){
+                  nodes{ id isResolved comments(first:1){ nodes{ author{login} } } }
+                }
+              }
+            }
+          }
+          """
+          raw = gh(['api', 'graphql', '-f', f'query={query}', '-F', f'owner={owner}',
+                    '-F', f'name={name}', '-F', f'pr={pr}'])
+          allowed = set()
+          if raw:
+              for n in json.loads(raw)['data']['repository']['pullRequest']['reviewThreads']['nodes']:
+                  first = (n.get('comments') or {}).get('nodes') or []
+                  if (not n.get('isResolved') and first
+                          and (first[0].get('author') or {}).get('login') == 'claude[bot]'):
+                      allowed.add(n['id'])
+
+          resolved, refused = 0, []
+          for tid in claimed:
+              if tid not in allowed:
+                  refused.append(tid)
+                  continue
+              mutation = 'mutation($id:ID!){resolveReviewThread(input:{threadId:$id}){thread{isResolved}}}'
+              if gh(['api', 'graphql', '-f', f'query={mutation}', '-F', f'id={tid}']):
+                  resolved += 1
+
+          print(f'Resolved {resolved} of {len(claimed)} thread(s) claimed fixed.')
+          if refused:
+              print(f'Refused {len(refused)}: not an unresolved claude[bot] thread on this PR.')
+              for tid in refused:
+                  print(f'  {tid}')
+
+          summary = os.environ.get('GITHUB_STEP_SUMMARY')
+          if summary:
+              with open(summary, 'a', encoding='utf-8') as f:
+                  f.write(f'\n### Threads resolved\n\n{resolved} of {len(claimed)} claimed')
+                  if refused:
+                      f.write(f', {len(refused)} refused as not eligible')
+                  f.write('\n')
+          PYTHON_EOF
 
       # Turns, tokens and denials for every run, including failed ones -- the
       # action only reveals them with show_full_output, which prints the whole
