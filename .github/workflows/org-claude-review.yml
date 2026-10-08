@@ -265,6 +265,8 @@ jobs:
           import os
           import subprocess
 
+          BOT_LOGINS = {'claude', 'claude[bot]'}
+
           query = """
           query($owner:String!,$name:String!,$pr:Int!){
             repository(owner:$owner,name:$name){
@@ -298,7 +300,11 @@ jobs:
                   first = (n.get('comments') or {}).get('nodes') or []
                   if not first:
                       continue
-                  if (first[0].get('author') or {}).get('login') != 'claude[bot]':
+                  # GraphQL reports a GitHub App author without the [bot]
+                  # suffix that REST adds. Accept both: filtering on the REST
+                  # spelling alone matched nothing and silently found zero
+                  # threads to resolve.
+                  if (first[0].get('author') or {}).get('login') not in BOT_LOGINS:
                       continue
                   threads.append({
                       'id': n['id'],
@@ -444,9 +450,23 @@ jobs:
             Do not collect findings into the summary instead; a summary that lists
             problems nobody can locate in the diff is a failed review.
 
-            Then post exactly ONE top-level comment with `gh pr comment`, in the
-            shape `_org.md` defines. It carries the verdict and an index of the
-            inline comments, not their content again.
+            Then the summary, in the shape `_org.md` defines. It carries the
+            verdict and an index of the inline comments, not their content again.
+
+            A PR gets ONE summary comment, not one per review. On a first review
+            post it with `gh pr comment <n> --body "..."`. On any later review
+            REPLACE the one already there:
+
+                gh pr comment <n> --edit-last --body "..."
+
+            Four stacked verdicts on one PR is noise, and the reader has to work
+            out which is current. One comment that always reflects the latest
+            state does not. If `--edit-last` fails because there is nothing of
+            yours to edit, post a new comment instead.
+
+            Rewrite it whole. The replacement describes the PR as it stands now,
+            not a changelog of your previous opinions -- say what is still open,
+            what got fixed, and what the current verdict is.
 
             If the diff is genuinely clean, post only the summary saying so. Do not
             invent inline comments to look thorough.
@@ -578,6 +598,9 @@ jobs:
 
           owner, name, pr = os.environ['OWNER'], os.environ['NAME'], os.environ['PR']
 
+          # REST spells an App author `claude[bot]`, GraphQL spells it `claude`.
+          BOT_LOGINS = {'claude', 'claude[bot]'}
+
           def gh(args):
               r = subprocess.run(['gh'] + args, capture_output=True, text=True)
               return r.stdout if r.returncode == 0 else None
@@ -614,7 +637,7 @@ jobs:
               for n in json.loads(raw)['data']['repository']['pullRequest']['reviewThreads']['nodes']:
                   first = (n.get('comments') or {}).get('nodes') or []
                   if (not n.get('isResolved') and first
-                          and (first[0].get('author') or {}).get('login') == 'claude[bot]'):
+                          and (first[0].get('author') or {}).get('login') in BOT_LOGINS):
                       allowed.add(n['id'])
 
           resolved, refused = 0, []
