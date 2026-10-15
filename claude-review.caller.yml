@@ -36,6 +36,15 @@ on:
       - '**/yarn.lock'
       - '**/Podfile.lock'
 
+  # On demand. Commenting `@claude` on a pull request runs a FULL review, the
+  # whole diff rather than the slice since the last one -- for when the
+  # automatic pass reported it had skipped most of a large PR. The reusable
+  # workflow checks the commenter has write access before spending anything.
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+
 jobs:
   claude-review:
     uses: MagellanTV/.github/.github/workflows/org-claude-review.yml@main
