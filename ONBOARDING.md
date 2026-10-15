@@ -185,6 +185,7 @@ Both are written out in `rulesets/`, derived from what `smart-tv` already runs:
 |---|---|
 | `rulesets/org-branch-naming.json` | Restrict creations on `~ALL` except `feature/*`, `fix/*`, `hotfix/*`, `release/*` and the default-branch names in use (`main`, `master`, `develop`, `legacy`, `legacy-develop`) |
 | `rulesets/org-pr-approvals.json` | On `~DEFAULT_BRANCH`: restrict deletions, block force pushes, require a PR with 1 approval, code-owner review, last-push approval and thread resolution |
+| `rulesets/org-release-protection.json` | The same rules on `refs/heads/release/*`. Release branches had no protection at all, so a hotfix could be pushed straight in and reach the default branch unreviewed when the release merged |
 
 Two ways to apply them:
 
