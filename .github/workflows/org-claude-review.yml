@@ -157,10 +157,13 @@ jobs:
 
           labels = [l['name'] for l in pr.get('labels', [])]
 
-          if by_comment:
-              if pr.get('state') != 'open':
-                  stop('the pull request is closed')
+          # Checked for every event, not only comments: a run queued on `opened`
+          # can reach this step after the PR has already been merged, and there
+          # is nothing left to review.
+          if pr.get('state') != 'open':
+              stop('the pull request is no longer open')
 
+          if by_comment:
               # A trigger phrase is a public string; without this check any
               # account that can comment could spend the org's review budget.
               who = os.environ.get('COMMENTER', '')
@@ -184,7 +187,6 @@ jobs:
               should_run='true',
               pr=number,
               head_sha=pr['head']['sha'],
-              merge_ref=f'refs/pull/{number}/merge',
               changed_files=pr.get('changed_files', 0),
               additions=pr.get('additions', 0),
               deletions=pr.get('deletions', 0),
@@ -202,8 +204,12 @@ jobs:
         if: steps.ctx.outputs.should_run == 'true'
         uses: actions/checkout@v5
         with:
-          # Explicit: a comment event checks out the default branch otherwise.
-          ref: ${{ steps.ctx.outputs.merge_ref }}
+          # A SHA, not refs/pull/N/merge. The ref name disappears the moment a
+          # PR is closed and its branch deleted, which a queued run then hits as
+          # "couldn't find remote ref". The sha still resolves. It is also what
+          # a comment event needs, since the default checkout there would be the
+          # default branch rather than the PR.
+          ref: ${{ steps.ctx.outputs.head_sha }}
           fetch-depth: 1
 
       - name: Checkout organization configuration
