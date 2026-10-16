@@ -65,6 +65,10 @@ projects:
     platform: web
     description: "Website"
 
+  cms-frontend:
+    platform: web
+    description: "CMS frontend - TypeScript"
+
   magellan_analytics_kmp:
     platform: android
     description: "Kotlin Multiplatform analytics library - ships into both the Android and Apple apps"

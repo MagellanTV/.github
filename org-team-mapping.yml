@@ -33,6 +33,13 @@ projects:
       - test-team
     description: "Apple TV App"
   
+  cms-frontend:
+    teams:
+      - web-team
+      - tech-leads
+      - test-team
+    description: "CMS frontend"
+
   magellantv-backend:
     teams:
       - tech-leads
