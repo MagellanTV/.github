@@ -155,6 +155,8 @@ jobs:
 
           by_comment = event in ('issue_comment', 'pull_request_review_comment')
 
+          labels = [l['name'] for l in pr.get('labels', [])]
+
           if by_comment:
               if pr.get('state') != 'open':
                   stop('the pull request is closed')
@@ -166,17 +168,17 @@ jobs:
               if perm.get('permission') not in ('write', 'admin', 'maintain'):
                   stop(f'{who} does not have write access')
 
-              if (pr.get('head') or {}).get('repo', {}).get('full_name') != repo:
-                  stop('the head is a fork, which never receives org secrets')
+              # head.repo is null, not absent, once the source fork is deleted,
+              # so a default on .get() never fires and the chain would raise.
+              head_repo = ((pr.get('head') or {}).get('repo') or {}).get('full_name')
+              if head_repo != repo:
+                  stop('the head is a fork or its source repository is gone')
 
               if pr.get('draft') and str(os.environ.get('REVIEW_DRAFTS')).lower() != 'true':
                   stop('the pull request is a draft')
 
-              labels = [l['name'] for l in pr.get('labels', [])]
               if os.environ.get('SKIP_LABEL') in labels:
                   stop(f"labelled {os.environ['SKIP_LABEL']}")
-
-          labels = [l['name'] for l in pr.get('labels', [])]
 
           out(
               should_run='true',
