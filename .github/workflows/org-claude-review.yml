@@ -46,6 +46,11 @@ on:
         required: false
         type: number
         default: 0
+      trigger-phrase:
+        description: 'Comment phrase that forces a full review on demand'
+        required: false
+        type: string
+        default: '@claude'
       skip-label:
         description: 'PRs carrying this label are not reviewed'
         required: false
@@ -62,7 +67,7 @@ on:
         required: true
 
 concurrency:
-  group: claude-review-${{ github.repository }}-${{ github.event.pull_request.number }}
+  group: claude-review-${{ github.repository }}-${{ github.event.pull_request.number || github.event.issue.number }}
   cancel-in-progress: true
 
 jobs:
@@ -70,11 +75,22 @@ jobs:
     name: Claude review
     runs-on: ubuntu-latest
 
-    # Forks never receive organization secrets, so skip instead of failing red.
+    # Three ways in: a pull_request event, or the trigger phrase in a comment on
+    # a PR. Everything a comment event cannot answer from its payload -- draft
+    # state, labels, whether the head is a fork -- is resolved in the first step
+    # and gates the rest, because a job-level `if` cannot read step outputs.
     if: >-
-      github.event.pull_request.head.repo.full_name == github.repository &&
-      (inputs.review-drafts || github.event.pull_request.draft == false) &&
-      !contains(github.event.pull_request.labels.*.name, inputs.skip-label)
+      (github.event_name == 'pull_request' &&
+        github.event.pull_request.head.repo.full_name == github.repository &&
+        (inputs.review-drafts || github.event.pull_request.draft == false) &&
+        !contains(github.event.pull_request.labels.*.name, inputs.skip-label))
+      ||
+      (github.event_name == 'issue_comment' &&
+        github.event.issue.pull_request != null &&
+        contains(github.event.comment.body, inputs.trigger-phrase))
+      ||
+      (github.event_name == 'pull_request_review_comment' &&
+        contains(github.event.comment.body, inputs.trigger-phrase))
 
     permissions:
       contents: read
@@ -90,12 +106,108 @@ jobs:
       # means touching every caller, on both main and the open release branch.
 
     steps:
+      # Everything downstream reads the PR from here rather than from the event
+      # payload, because a comment event has no pull_request in its payload at
+      # all. On a comment this also enforces what the job gate could not: that
+      # the PR is open, is not a fork, is not a draft, carries no skip label,
+      # and that whoever asked has write access -- a trigger phrase is a public
+      # string and anyone can type it.
+      - name: Resolve pull request context
+        id: ctx
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          EVENT: ${{ github.event_name }}
+          ISSUE_NUMBER: ${{ github.event.issue.number || github.event.pull_request.number }}
+          COMMENTER: ${{ github.event.comment.user.login }}
+          SKIP_LABEL: ${{ inputs.skip-label }}
+          REVIEW_DRAFTS: ${{ inputs.review-drafts }}
+        run: |
+          python3 << 'PYTHON_EOF'
+          import json
+          import os
+          import subprocess
+
+          repo = os.environ['REPO']
+          event = os.environ['EVENT']
+          number = os.environ.get('ISSUE_NUMBER') or ''
+
+          def gh(path):
+              r = subprocess.run(['gh', 'api', path], capture_output=True, text=True)
+              return json.loads(r.stdout) if r.returncode == 0 and r.stdout.strip() else None
+
+          def out(**kw):
+              with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+                  for k, v in kw.items():
+                      f.write(f'{k}={v}\n')
+
+          def stop(reason):
+              print(f'Not reviewing: {reason}')
+              out(should_run='false')
+              raise SystemExit(0)
+
+          if not number:
+              stop('no pull request number in the event')
+
+          pr = gh(f'repos/{repo}/pulls/{number}')
+          if pr is None:
+              stop(f'could not read pull request #{number}')
+
+          by_comment = event in ('issue_comment', 'pull_request_review_comment')
+
+          labels = [l['name'] for l in pr.get('labels', [])]
+
+          if by_comment:
+              if pr.get('state') != 'open':
+                  stop('the pull request is closed')
+
+              # A trigger phrase is a public string; without this check any
+              # account that can comment could spend the org's review budget.
+              who = os.environ.get('COMMENTER', '')
+              perm = gh(f'repos/{repo}/collaborators/{who}/permission') or {}
+              if perm.get('permission') not in ('write', 'admin', 'maintain'):
+                  stop(f'{who} does not have write access')
+
+              # head.repo is null, not absent, once the source fork is deleted,
+              # so a default on .get() never fires and the chain would raise.
+              head_repo = ((pr.get('head') or {}).get('repo') or {}).get('full_name')
+              if head_repo != repo:
+                  stop('the head is a fork or its source repository is gone')
+
+              if pr.get('draft') and str(os.environ.get('REVIEW_DRAFTS')).lower() != 'true':
+                  stop('the pull request is a draft')
+
+              if os.environ.get('SKIP_LABEL') in labels:
+                  stop(f"labelled {os.environ['SKIP_LABEL']}")
+
+          out(
+              should_run='true',
+              pr=number,
+              head_sha=pr['head']['sha'],
+              merge_ref=f'refs/pull/{number}/merge',
+              changed_files=pr.get('changed_files', 0),
+              additions=pr.get('additions', 0),
+              deletions=pr.get('deletions', 0),
+              debug='true' if 'claude-debug' in labels else 'false',
+              # An on-demand request means someone wants the whole PR looked at
+              # again, not the slice since the last marker. CodeRabbit draws the
+              # same line between `review` and `full review`.
+              force_full='true' if by_comment else 'false',
+          )
+          print(f'#{number} head={pr["head"]["sha"][:8]} files={pr.get("changed_files", 0)} '
+                f'trigger={event} force_full={by_comment}')
+          PYTHON_EOF
+
       - name: Checkout pull request branch
+        if: steps.ctx.outputs.should_run == 'true'
         uses: actions/checkout@v5
         with:
+          # Explicit: a comment event checks out the default branch otherwise.
+          ref: ${{ steps.ctx.outputs.merge_ref }}
           fetch-depth: 1
 
       - name: Checkout organization configuration
+        if: steps.ctx.outputs.should_run == 'true'
         uses: actions/checkout@v5
         with:
           repository: MagellanTV/.github
@@ -104,6 +216,7 @@ jobs:
 
       - name: Resolve review profile
         id: profile
+        if: steps.ctx.outputs.should_run == 'true'
         env:
           PROJECT_NAME: ${{ inputs.project-name != '' && inputs.project-name || github.event.repository.name }}
           PLATFORM_OVERRIDE: ${{ inputs.platform }}
@@ -173,11 +286,13 @@ jobs:
       # has no history to walk.
       - name: Determine review mode
         id: mode
+        if: steps.ctx.outputs.should_run == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
-          PR: ${{ github.event.pull_request.number }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR: ${{ steps.ctx.outputs.pr }}
+          HEAD_SHA: ${{ steps.ctx.outputs.head_sha }}
+          FORCE_FULL: ${{ steps.ctx.outputs.force_full }}
         run: |
           python3 << 'PYTHON_EOF'
           import json
@@ -202,6 +317,13 @@ jobs:
               with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
                   for k, v in kw.items():
                       f.write(f'{k}={v}\n')
+
+          # Asking for a review by name means wanting the whole PR looked at
+          # again, not the slice since the last marker.
+          if os.environ.get('FORCE_FULL') == 'true':
+              print('Requested by comment. Full review.')
+              out(mode='full', since='', changed='')
+              raise SystemExit(0)
 
           MARKER = re.compile(r'<!--\s*claude-review-sha:\s*([0-9a-f]{7,40})\s*-->')
 
@@ -253,12 +375,12 @@ jobs:
       # allowlist and will not be. So the threads are fetched here and handed to
       # it as a file, which it can Read. It never needs a GraphQL tool.
       - name: Collect open review threads
-        if: steps.mode.outputs.mode != 'skip'
+        if: steps.ctx.outputs.should_run == 'true' && steps.mode.outputs.mode != 'skip'
         env:
           GH_TOKEN: ${{ github.token }}
           OWNER: ${{ github.repository_owner }}
           NAME: ${{ github.event.repository.name }}
-          PR: ${{ github.event.pull_request.number }}
+          PR: ${{ steps.ctx.outputs.pr }}
         run: |
           python3 << 'PYTHON_EOF'
           import json
@@ -323,7 +445,7 @@ jobs:
 
       - name: Claude review
         id: claude
-        if: steps.mode.outputs.mode != 'skip'
+        if: steps.ctx.outputs.should_run == 'true' && steps.mode.outputs.mode != 'skip'
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
@@ -354,18 +476,18 @@ jobs:
           #   gh api --method PATCH orgs/MagellanTV/actions/variables/CLAUDE_DEBUG -f value=false
           #
           # Turn it off again when you have what you need.
-          show_full_output: ${{ contains(github.event.pull_request.labels.*.name, 'claude-debug') || vars.CLAUDE_DEBUG == 'true' }}
+          show_full_output: ${{ steps.ctx.outputs.debug == 'true' || vars.CLAUDE_DEBUG == 'true' }}
           prompt: |
             REPO: ${{ github.repository }}
-            PR NUMBER: ${{ github.event.pull_request.number }}
+            PR NUMBER: ${{ steps.ctx.outputs.pr }}
             PROJECT: ${{ steps.profile.outputs.project }}
             PLATFORM: ${{ steps.profile.outputs.platform }}
-            CHANGED FILES: ${{ github.event.pull_request.changed_files }}
-            LINES: +${{ github.event.pull_request.additions }} / -${{ github.event.pull_request.deletions }}
+            CHANGED FILES: ${{ steps.ctx.outputs.changed_files }}
+            LINES: +${{ steps.ctx.outputs.additions }} / -${{ steps.ctx.outputs.deletions }}
             TURN BUDGET: ${{ steps.profile.outputs.max_turns }} tool calls
             REVIEW MODE: ${{ steps.mode.outputs.mode }}
             REVIEWED THROUGH: ${{ steps.mode.outputs.since }}
-            HEAD SHA: ${{ github.event.pull_request.head.sha }}
+            HEAD SHA: ${{ steps.ctx.outputs.head_sha }}
 
             You are the MagellanTV code reviewer. Write everything in English.
 
@@ -402,7 +524,7 @@ jobs:
             diff has been looked at already.
 
             Read your own previous comments first, with
-            `gh pr view ${{ github.event.pull_request.number }} --json comments`.
+            `gh pr view ${{ steps.ctx.outputs.pr }} --json comments`.
             Then:
 
             - Do NOT repeat a finding you already posted. Repeating yourself is
@@ -482,7 +604,7 @@ jobs:
 
             END the summary comment with this line, exactly, on its own:
 
-                <!-- claude-review-sha: ${{ github.event.pull_request.head.sha }} -->
+                <!-- claude-review-sha: ${{ steps.ctx.outputs.head_sha }} -->
 
             It renders as nothing. The next run reads it to work out what you
             have already reviewed, and without it that run starts from scratch
@@ -503,13 +625,13 @@ jobs:
             - ONE command per call. No pipes, no `&&`, no `;`, no subshells.
               A pipeline is rejected whole if any part of it is not allowed, so
               `gh pr diff --name-only | head -40` fails on `head`. Run
-              `gh pr diff ${{ github.event.pull_request.number }} --name-only`
+              `gh pr diff ${{ steps.ctx.outputs.pr }} --name-only`
               and read the output.
             - You cannot write anything. No `>` redirection, no `mkdir`, no temp
               files, not in the workspace and not in /tmp. Hold intermediate
               results in your head or in the comments you post.
             - `gh api` is not available. For the file list with sizes use
-              `gh pr view ${{ github.event.pull_request.number }} --json files`.
+              `gh pr view ${{ steps.ctx.outputs.pr }} --json files`.
               For the diff use `gh pr diff`.
             - For reading, globbing and searching files use the Read, Glob and
               Grep tools, never `cat`, `head`, `tail`, `find`, `grep` or `rg`.
@@ -592,12 +714,12 @@ jobs:
       # this PR, so the worst a prompt injection can achieve is closing a thread
       # that should have stayed open -- which a human reopens in one click.
       - name: Resolve threads marked fixed
-        if: steps.mode.outputs.mode != 'skip' && steps.claude.conclusion == 'success'
+        if: steps.ctx.outputs.should_run == 'true' && steps.mode.outputs.mode != 'skip' && steps.claude.conclusion == 'success'
         env:
           GH_TOKEN: ${{ github.token }}
           OWNER: ${{ github.repository_owner }}
           NAME: ${{ github.event.repository.name }}
-          PR: ${{ github.event.pull_request.number }}
+          PR: ${{ steps.ctx.outputs.pr }}
         run: |
           python3 << 'PYTHON_EOF'
           import json
