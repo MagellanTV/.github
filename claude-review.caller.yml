@@ -48,8 +48,12 @@ on:
 jobs:
   claude-review:
     uses: MagellanTV/.github/.github/workflows/org-claude-review.yml@main
+    # contents: write is a ceiling, not what the review gets. The reusable
+    # workflow's review job narrows itself back to contents: read before Claude
+    # touches anything; only its separate resolve-threads job -- no checkout, no
+    # model -- uses write, because resolving a review thread requires it.
     permissions:
-      contents: read
+      contents: write
       pull-requests: write
       id-token: write
     secrets: inherit

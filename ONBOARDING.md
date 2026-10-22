@@ -150,6 +150,7 @@ the remote.
 | No `Claude PR Review` run at all | Actions disabled (§1); or the PR targets a release branch without the caller (§5); or the diff only touches `paths-ignore` entries |
 | Run skipped with "Workflow validation failed" | The PR edits the caller itself (§4). Merge it, then test on a different PR |
 | `startup_failure` in ~1 second | The reusable workflow requests a permission the caller does not grant. A called workflow cannot exceed its caller's permissions — update both |
+| Claude replies in a thread but the thread stays open, with a warning about `contents: write` | The repository's caller predates the resolve-threads job. Resolving a review thread needs `contents: write`; copy the current `claude-review.caller.yml` |
 | `is_error: true`, one turn, zero model usage | Authentication. Label the PR `claude-debug` and rerun to see the real error in the log; `401 Invalid bearer token` means the org secret needs regenerating with `claude setup-token` |
 | Review is generic, ignores the platform | The `org-claude-config.yml` key does not match the repository name (§2) |
 | Findings all in one comment, none inline | Check `classify_inline_comments`; it buffers inline comments and can suppress them |
