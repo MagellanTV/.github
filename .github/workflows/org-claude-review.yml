@@ -184,10 +184,20 @@ jobs:
           # push     -- the PR changed; review what moved
           # ondemand -- someone typed the trigger phrase; review everything
           # reply    -- a human answered inside a review thread
+          # Case-insensitive on purpose: the job gate's contains() is, so
+          # "@Claude" passes it. A case-sensitive check here then filed that
+          # request as a reply and dropped it with no word to whoever asked.
+          phrase = (os.environ.get('TRIGGER_PHRASE') or '@claude').casefold()
+          asked = phrase in (os.environ.get('COMMENT_BODY') or '').casefold()
+
           if not by_comment:
               trigger = 'push'
-          elif os.environ.get('TRIGGER_PHRASE', '@claude') in (os.environ.get('COMMENT_BODY') or ''):
+          elif asked:
               trigger = 'ondemand'
+          elif event == 'issue_comment':
+              # Conversation comments have no threads, so one can never be a
+              # reply; it only got this far by matching the phrase.
+              stop('a conversation comment without the trigger phrase')
           else:
               trigger = 'reply'
 
@@ -939,7 +949,7 @@ jobs:
               snapshot = {}
 
           done = {'resolve': 0, 'reopen': 0, 'reply': 0}
-          refused, raced, failed = [], [], []
+          refused, raced, failed, state_failed = [], [], [], []
           for action, tid, text in decisions:
               t = current.get(tid)
               if t is None:
@@ -958,21 +968,35 @@ jobs:
                   failed.append(tid)
                   continue
 
-              if action == 'resolve' and not t['resolved']:
-                  gh(['api', 'graphql', '-f',
-                      'query=mutation($id:ID!){resolveReviewThread(input:{threadId:$id}){thread{isResolved}}}',
-                      '-F', f'id={tid}'], use=token)
-              elif action == 'reopen' and t['resolved']:
-                  gh(['api', 'graphql', '-f',
-                      'query=mutation($id:ID!){unresolveReviewThread(input:{threadId:$id}){thread{isResolved}}}',
-                      '-F', f'id={tid}'], use=token)
+              # The reply is posted; now the thread state. A resolve is only
+              # counted when GitHub says the thread IS resolved afterwards --
+              # the mutation returns the new state, so read it rather than
+              # assume it. Falls back to the job token if the App token is
+              # refused, and reports a failure instead of a false success.
+              want = {'resolve': True, 'reopen': False}.get(action)
+              if want is not None and t['resolved'] != want:
+                  verb = 'resolveReviewThread' if want else 'unresolveReviewThread'
+                  q = f'query=mutation($id:ID!){{{verb}(input:{{threadId:$id}}){{thread{{isResolved}}}}}}'
+                  state = None
+                  for tok in dict.fromkeys([token, os.environ['GH_TOKEN']]):
+                      res = gh(['api', 'graphql', '-f', q, '-F', f'id={tid}'], use=tok)
+                      try:
+                          state = json.loads(res)['data'][verb]['thread']['isResolved']
+                      except (TypeError, KeyError, ValueError):
+                          state = None
+                      if state == want:
+                          break
+                  if state != want:
+                      state_failed.append(tid)
+                      continue
               done[action] += 1
 
           print(f"Replied and resolved {done['resolve']}, reopened {done['reopen']}, "
                 f"replied only {done['reply']}  (as {'claude' if claude_token else 'github-actions'})")
           for label, ids in (('Refused, not your thread', refused),
                              ('Skipped, already answered by another run', raced),
-                             ('Reply failed to post', failed)):
+                             ('Reply failed to post', failed),
+                             ('Replied, but could NOT change thread state', state_failed)):
               if ids:
                   print(f'{label}: {len(ids)}')
 
@@ -982,7 +1006,8 @@ jobs:
                   f.write('\n### Thread conversations\n\n| | |\n|---|---|\n')
                   f.write(f"| Resolved | {done['resolve']} |\n| Reopened | {done['reopen']} |\n")
                   f.write(f"| Replied only | {done['reply']} |\n")
-                  for label, ids in (('Refused', refused), ('Raced', raced), ('Failed', failed)):
+                  for label, ids in (('Refused', refused), ('Raced', raced), ('Failed', failed),
+                                     ('State not changed', state_failed)):
                       if ids:
                           f.write(f'| {label} | {len(ids)} |\n')
           PYTHON_EOF
