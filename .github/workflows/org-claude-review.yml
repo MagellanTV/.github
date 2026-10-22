@@ -66,19 +66,39 @@ on:
         description: 'Organization secret holding the Claude Code OAuth token'
         required: true
 
+# Concurrency is decided when the run is queued, BEFORE the job-level `if`. So
+# every comment on a PR -- a "thanks", a reply between two humans -- used to join
+# the same group as the review, cancel it mid-run, and then skip itself. Reviews
+# died without posting and nothing said why.
+#
+# Three lanes now, and none of them can cancel another:
+#   pull_request  -> `push`   pushes supersede each other, as before
+#   human reply   -> `reply`  never cancels; a newer reply replaces a pending
+#                             one, and the run that does go processes every
+#                             thread still waiting, so nothing is dropped
+#   anything else -> its own group per comment, cancelling nothing
+#
+# Kept on one line on purpose. A folded multi-line expression keeps its line
+# breaks inside the ${{ }}, and a parse failure here is a startup_failure on
+# every run in every repository. The trigger phrase is spelled out rather than
+# read from inputs for the same reason; it must match the input's default.
 concurrency:
-  group: claude-review-${{ github.repository }}-${{ github.event.pull_request.number || github.event.issue.number }}
-  cancel-in-progress: true
+  group: "claude-review-${{ github.repository }}-${{ github.event.pull_request.number || github.event.issue.number }}-${{ github.event_name == 'pull_request' && 'push' || (github.event_name == 'pull_request_review_comment' && github.event.comment.user.type != 'Bot' && github.event.comment.in_reply_to_id && !contains(github.event.comment.body, '@claude')) && 'reply' || format('c{0}', github.event.comment.id) }}"
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   review:
     name: Claude review
     runs-on: ubuntu-latest
 
-    # Three ways in: a pull_request event, or the trigger phrase in a comment on
-    # a PR. Everything a comment event cannot answer from its payload -- draft
-    # state, labels, whether the head is a fork -- is resolved in the first step
-    # and gates the rest, because a job-level `if` cannot read step outputs.
+    # Four ways in: a push to the PR; the trigger phrase in any comment; or a
+    # human REPLYING inside a review thread -- the developer answering one of
+    # Claude's findings, which is what closes the review loop. Bots never get
+    # in, or Claude's own replies would trigger the next run forever.
+    #
+    # A reply to a thread Claude did not open passes this gate and is stopped
+    # in the first step, which can read the thread's root; a job-level `if`
+    # cannot make API calls.
     if: >-
       (github.event_name == 'pull_request' &&
         github.event.pull_request.head.repo.full_name == github.repository &&
@@ -87,10 +107,13 @@ jobs:
       ||
       (github.event_name == 'issue_comment' &&
         github.event.issue.pull_request != null &&
+        github.event.comment.user.type != 'Bot' &&
         contains(github.event.comment.body, inputs.trigger-phrase))
       ||
       (github.event_name == 'pull_request_review_comment' &&
-        contains(github.event.comment.body, inputs.trigger-phrase))
+        github.event.comment.user.type != 'Bot' &&
+        (contains(github.event.comment.body, inputs.trigger-phrase) ||
+         github.event.comment.in_reply_to_id))
 
     permissions:
       contents: read
@@ -120,6 +143,9 @@ jobs:
           EVENT: ${{ github.event_name }}
           ISSUE_NUMBER: ${{ github.event.issue.number || github.event.pull_request.number }}
           COMMENTER: ${{ github.event.comment.user.login }}
+          COMMENT_BODY: ${{ github.event.comment.body }}
+          IN_REPLY_TO: ${{ github.event.comment.in_reply_to_id }}
+          TRIGGER_PHRASE: ${{ inputs.trigger-phrase }}
           SKIP_LABEL: ${{ inputs.skip-label }}
           REVIEW_DRAFTS: ${{ inputs.review-drafts }}
         run: |
@@ -155,6 +181,26 @@ jobs:
 
           by_comment = event in ('issue_comment', 'pull_request_review_comment')
 
+          # push     -- the PR changed; review what moved
+          # ondemand -- someone typed the trigger phrase; review everything
+          # reply    -- a human answered inside a review thread
+          # Case-insensitive on purpose: the job gate's contains() is, so
+          # "@Claude" passes it. A case-sensitive check here then filed that
+          # request as a reply and dropped it with no word to whoever asked.
+          phrase = (os.environ.get('TRIGGER_PHRASE') or '@claude').casefold()
+          asked = phrase in (os.environ.get('COMMENT_BODY') or '').casefold()
+
+          if not by_comment:
+              trigger = 'push'
+          elif asked:
+              trigger = 'ondemand'
+          elif event == 'issue_comment':
+              # Conversation comments have no threads, so one can never be a
+              # reply; it only got this far by matching the phrase.
+              stop('a conversation comment without the trigger phrase')
+          else:
+              trigger = 'reply'
+
           labels = [l['name'] for l in pr.get('labels', [])]
 
           # Checked for every event, not only comments: a run queued on `opened`
@@ -183,6 +229,15 @@ jobs:
               if os.environ.get('SKIP_LABEL') in labels:
                   stop(f"labelled {os.environ['SKIP_LABEL']}")
 
+          # A reply only matters if it answers Claude. Replies between two
+          # humans get here too -- the job gate cannot see a thread's root --
+          # and stop now, having spent one API call.
+          if trigger == 'reply':
+              root_id = os.environ.get('IN_REPLY_TO') or ''
+              root = gh(f'repos/{repo}/pulls/comments/{root_id}') if root_id else None
+              if not root or (root.get('user') or {}).get('login') != 'claude[bot]':
+                  stop('a reply in a thread Claude did not open')
+
           out(
               should_run='true',
               pr=number,
@@ -191,13 +246,14 @@ jobs:
               additions=pr.get('additions', 0),
               deletions=pr.get('deletions', 0),
               debug='true' if 'claude-debug' in labels else 'false',
+              trigger=trigger,
               # An on-demand request means someone wants the whole PR looked at
               # again, not the slice since the last marker. CodeRabbit draws the
               # same line between `review` and `full review`.
-              force_full='true' if by_comment else 'false',
+              force_full='true' if trigger == 'ondemand' else 'false',
           )
           print(f'#{number} head={pr["head"]["sha"][:8]} files={pr.get("changed_files", 0)} '
-                f'trigger={event} force_full={by_comment}')
+                f'event={event} trigger={trigger}')
           PYTHON_EOF
 
       - name: Checkout pull request branch
@@ -285,6 +341,99 @@ jobs:
               out.write(f'max_turns={max_turns}\n')
           PYTHON_EOF
 
+      # Claude's threads on this PR, WITH the whole conversation in each. Two
+      # earlier versions got this wrong: they handed Claude only the first
+      # comment of each thread, so it never saw the developer's answer; and
+      # they dropped every resolved thread, so a developer who replied
+      # "Updated!" and closed the thread himself skipped verification entirely.
+      #
+      # A thread is in play unless it is resolved AND Claude had the last word.
+      # "Awaiting" means a human spoke last -- that is a conversation Claude
+      # owes an answer to, whatever the resolved flag says.
+      #
+      # Runs before the mode step, which needs the awaiting count: a reply with
+      # no code change is still work.
+      - name: Collect review threads
+        id: threads
+        if: steps.ctx.outputs.should_run == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OWNER: ${{ github.repository_owner }}
+          NAME: ${{ github.event.repository.name }}
+          PR: ${{ steps.ctx.outputs.pr }}
+        run: |
+          python3 << 'PYTHON_EOF'
+          import json
+          import os
+          import subprocess
+
+          # GraphQL spells a GitHub App author `claude`; REST spells it `claude[bot]`.
+          BOT_LOGINS = {'claude', 'claude[bot]'}
+
+          query = """
+          query($owner:String!,$name:String!,$pr:Int!){
+            repository(owner:$owner,name:$name){
+              pullRequest(number:$pr){
+                reviewThreads(first:100){
+                  nodes{
+                    id isResolved isOutdated path line
+                    comments(first:50){ nodes{ databaseId author{login} body createdAt } }
+                  }
+                }
+              }
+            }
+          }
+          """
+          r = subprocess.run(
+              ['gh', 'api', 'graphql', '-f', f'query={query}',
+               '-F', f"owner={os.environ['OWNER']}", '-F', f"name={os.environ['NAME']}",
+               '-F', f"pr={os.environ['PR']}"],
+              capture_output=True, text=True)
+
+          threads, awaiting = [], 0
+          if r.returncode == 0:
+              try:
+                  nodes = json.loads(r.stdout)['data']['repository']['pullRequest']['reviewThreads']['nodes']
+              except (KeyError, TypeError, json.JSONDecodeError):
+                  nodes = []
+              for n in nodes:
+                  comments = (n.get('comments') or {}).get('nodes') or []
+                  if not comments:
+                      continue
+                  if (comments[0].get('author') or {}).get('login') not in BOT_LOGINS:
+                      continue                      # not Claude's thread
+                  last = comments[-1]
+                  human_spoke_last = (last.get('author') or {}).get('login') not in BOT_LOGINS
+                  if n.get('isResolved') and not human_spoke_last:
+                      continue                      # settled
+                  awaiting += human_spoke_last
+                  threads.append({
+                      'thread': n['id'],
+                      'path': n.get('path'),
+                      'line': n.get('line'),
+                      'resolved': n.get('isResolved'),
+                      'outdated': n.get('isOutdated'),
+                      'awaiting_your_reply': human_spoke_last,
+                      'last_comment_id': last.get('databaseId'),
+                      'conversation': [
+                          {'author': (c.get('author') or {}).get('login'),
+                           'at': c.get('createdAt'),
+                           'text': (c.get('body') or '')[:1500]}
+                          for c in comments
+                      ],
+                  })
+          else:
+              print(f'Could not read review threads: {r.stderr.strip()[:200]}')
+
+          with open('.claude-threads.json', 'w', encoding='utf-8') as f:
+              json.dump(threads, f, indent=2)
+
+          print(f'{len(threads)} thread(s) of yours in play, {awaiting} awaiting your reply')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+              f.write(f'in_play={len(threads)}\n')
+              f.write(f'awaiting={awaiting}\n')
+          PYTHON_EOF
+
       # Works out whether this is the first review of the PR or a follow-up,
       # and for a follow-up what has changed since. The marker is a hidden HTML
       # comment Claude leaves in its summary; the comparison runs through the
@@ -299,6 +448,8 @@ jobs:
           PR: ${{ steps.ctx.outputs.pr }}
           HEAD_SHA: ${{ steps.ctx.outputs.head_sha }}
           FORCE_FULL: ${{ steps.ctx.outputs.force_full }}
+          TRIGGER: ${{ steps.ctx.outputs.trigger }}
+          AWAITING: ${{ steps.threads.outputs.awaiting }}
         run: |
           python3 << 'PYTHON_EOF'
           import json
@@ -333,6 +484,21 @@ jobs:
 
           MARKER = re.compile(r'<!--\s*claude-review-sha:\s*([0-9a-f]{7,40})\s*-->')
 
+          trigger = os.environ.get('TRIGGER', 'push')
+          awaiting = int(os.environ.get('AWAITING') or 0)
+
+          def threads_or_skip(why):
+              # The code has not moved, so there is nothing new to review. That
+              # is not the same as nothing to do: a developer may have answered
+              # one of Claude's findings, and that answer is owed a reply.
+              if awaiting:
+                  print(f'{why} {awaiting} thread(s) awaiting a reply. Threads only.')
+                  out(mode='threads', since='', changed='')
+              else:
+                  print(f'{why} Nothing awaiting a reply. Nothing to do.')
+                  out(mode='skip', since='', changed='')
+              raise SystemExit(0)
+
           comments = gh(f'repos/{repo}/issues/{pr}/comments?per_page=100') or []
           last = None
           for c in comments:
@@ -342,7 +508,12 @@ jobs:
               if m:
                   last = m.group(1)
 
+          # A reply is about a conversation, not the diff. Without a clean
+          # range to review incrementally, answer the threads and stop rather
+          # than run a full review because someone typed "fixed".
           if not last:
+              if trigger == 'reply':
+                  threads_or_skip('Reply with no review marker on the PR.')
               print('No previous review marker. Full review.')
               out(mode='full', since='', changed='')
               raise SystemExit(0)
@@ -352,17 +523,19 @@ jobs:
           # reviewing the wrong range, so fall back rather than guess.
           cmp = gh(f'repos/{repo}/compare/{last}...{head}')
           if cmp is None:
+              if trigger == 'reply':
+                  threads_or_skip(f'Reply; recorded commit {last[:8]} is unreachable.')
               print(f'Recorded commit {last[:8]} is unreachable (force-push or rebase). Full review.')
               out(mode='full', since='', changed='')
               raise SystemExit(0)
 
           status = cmp.get('status')
           if status == 'identical':
-              print(f'Head has not moved since {last[:8]}. Nothing to review.')
-              out(mode='skip', since=last, changed='')
-              raise SystemExit(0)
+              threads_or_skip(f'Head has not moved since {last[:8]}.')
 
           if status != 'ahead' or cmp.get('behind_by', 0):
+              if trigger == 'reply':
+                  threads_or_skip(f'Reply; history diverged since {last[:8]}.')
               print(f'History diverged since {last[:8]} (status={status}). Full review.')
               out(mode='full', since='', changed='')
               raise SystemExit(0)
@@ -375,78 +548,6 @@ jobs:
           # output, which would truncate on a big range.
           with open('.claude-changed-since.txt', 'w', encoding='utf-8') as f:
               f.write('\n'.join(files))
-          PYTHON_EOF
-
-      # Claude cannot enumerate its own inline comments: `gh api` is not in its
-      # allowlist and will not be. So the threads are fetched here and handed to
-      # it as a file, which it can Read. It never needs a GraphQL tool.
-      - name: Collect open review threads
-        if: steps.ctx.outputs.should_run == 'true' && steps.mode.outputs.mode != 'skip'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          OWNER: ${{ github.repository_owner }}
-          NAME: ${{ github.event.repository.name }}
-          PR: ${{ steps.ctx.outputs.pr }}
-        run: |
-          python3 << 'PYTHON_EOF'
-          import json
-          import os
-          import subprocess
-
-          BOT_LOGINS = {'claude', 'claude[bot]'}
-
-          query = """
-          query($owner:String!,$name:String!,$pr:Int!){
-            repository(owner:$owner,name:$name){
-              pullRequest(number:$pr){
-                reviewThreads(first:100){
-                  nodes{
-                    id isResolved isOutdated path line
-                    comments(first:1){ nodes{ author{login} body } }
-                  }
-                }
-              }
-            }
-          }
-          """
-
-          r = subprocess.run(
-              ['gh', 'api', 'graphql', '-f', f'query={query}',
-               '-F', f"owner={os.environ['OWNER']}", '-F', f"name={os.environ['NAME']}",
-               '-F', f"pr={os.environ['PR']}"],
-              capture_output=True, text=True)
-
-          threads = []
-          if r.returncode == 0:
-              try:
-                  nodes = json.loads(r.stdout)['data']['repository']['pullRequest']['reviewThreads']['nodes']
-              except (KeyError, TypeError, json.JSONDecodeError):
-                  nodes = []
-              for n in nodes:
-                  if n.get('isResolved'):
-                      continue
-                  first = (n.get('comments') or {}).get('nodes') or []
-                  if not first:
-                      continue
-                  # GraphQL reports a GitHub App author without the [bot]
-                  # suffix that REST adds. Accept both: filtering on the REST
-                  # spelling alone matched nothing and silently found zero
-                  # threads to resolve.
-                  if (first[0].get('author') or {}).get('login') not in BOT_LOGINS:
-                      continue
-                  threads.append({
-                      'id': n['id'],
-                      'path': n.get('path'),
-                      'line': n.get('line'),
-                      'outdated': n.get('isOutdated'),
-                      'comment': (first[0].get('body') or '')[:600],
-                  })
-          else:
-              print(f'Could not read review threads: {r.stderr.strip()[:200]}')
-
-          with open('.claude-open-threads.json', 'w', encoding='utf-8') as f:
-              json.dump(threads, f, indent=2)
-          print(f'{len(threads)} unresolved thread(s) from previous reviews')
           PYTHON_EOF
 
       - name: Claude review
@@ -492,8 +593,11 @@ jobs:
             LINES: +${{ steps.ctx.outputs.additions }} / -${{ steps.ctx.outputs.deletions }}
             TURN BUDGET: ${{ steps.profile.outputs.max_turns }} tool calls
             REVIEW MODE: ${{ steps.mode.outputs.mode }}
+            TRIGGER: ${{ steps.ctx.outputs.trigger }}
             REVIEWED THROUGH: ${{ steps.mode.outputs.since }}
             HEAD SHA: ${{ steps.ctx.outputs.head_sha }}
+            THREADS AWAITING YOUR REPLY: ${{ steps.threads.outputs.awaiting }}
+            RUN ID: ${{ github.run_id }}
 
             You are the MagellanTV code reviewer. Write everything in English.
 
@@ -536,49 +640,72 @@ jobs:
             - Do NOT repeat a finding you already posted. Repeating yourself is
               how a review bot gets muted, and the developer has no way to tell
               a stale comment from a new one.
-            - If a push fixed something you flagged, say so in one line in the
-              summary. Acknowledging a fix is worth more than silence -- it tells
-              the developer the loop closed.
-            - If a push did NOT fix something you flagged and the code is still
-              there, do not re-post it inline. Note it once in the summary as
-              still open.
+            - Whether a push fixed something you flagged is settled in the
+              thread itself -- see YOUR THREADS below -- not by a new comment.
 
             - Findings in the newly changed files are new work. Post those
               inline as usual.
 
             If REVIEW MODE is `full`, review the whole PR normally. That happens
             on a first review, after a force-push or rebase makes the old range
-            meaningless, and whenever no marker is found on an older PR.
+            meaningless, whenever no marker is found on an older PR, and when
+            someone asked for it by commenting the trigger phrase.
 
-            CLOSING THREADS YOU OPENED -- do this on EVERY review, in both modes.
+            IF REVIEW MODE IS `threads`, the code has not changed since your last
+            review. Someone answered you in a thread. Do NOT review the diff
+            again and do NOT post new inline comments -- the diff is exactly what
+            you already reviewed. Your whole job this run is YOUR THREADS below.
 
-            `.claude-open-threads.json` lists every inline comment of yours on
-            this PR that is still unresolved, each with an `id`, the file and
-            line, and what you said. Read it, then look at the current code at
-            each of those places.
+            YOUR THREADS -- do this on EVERY run, whatever the mode.
 
-            A `full` review is not a first review. It is simply one that could
-            not establish a range, and the PR may well carry threads of yours
-            from weeks ago. Check them too.
+            `.claude-threads.json` lists every inline thread you opened on this
+            PR that is still in play, each with the FULL conversation: your
+            finding first, then everything said after it. A thread is in play
+            when it is unresolved, or when a human spoke last -- including a
+            thread the developer closed himself. `awaiting_your_reply: true`
+            means someone answered you and is waiting.
 
-            For every one where the developer has actually addressed the point,
-            collect its `id`. Judge the code, not the intent: a thread is fixed
-            when the problem you described is no longer in the file. If the code
-            changed but the problem survives in another form, it is not fixed.
-            If you cannot tell, leave it open -- a human closes a thread in one
-            click, and reopening one you closed wrongly costs them a lot more.
+            For each thread, read the conversation, then read the code at that
+            location as it stands now, and decide one of three things:
 
-            Threads opened by anybody other than you are not yours to close,
-            even when you can see the point was addressed. Say so in the summary
-            instead.
+              resolve -- the point is settled. Either the code no longer has
+                         the problem, or the developer's answer shows it was
+                         never one. Say which, in one line.
+              reopen  -- the developer says it is handled but it is not: the
+                         problem is still in the code, or survives in a
+                         different form. Say exactly what is still wrong and
+                         where. Use this on a thread the developer closed.
+              reply   -- it needs saying but not deciding yet: they asked a
+                         question, or proposed something you want to respond to.
 
-            Then put the ids in the summary, on their own line:
+            Judge the answer on its merits, not its confidence. "Updated!" is a
+            claim -- check the code. "This is intentional because X" is an
+            argument -- if X holds, say so and resolve; if not, say why not.
+            "Will do in a follow-up ticket" is a fair answer for a Minor or a
+            Nit, not for a Blocker.
 
-                <!-- claude-resolved: <id>,<id>,<id> -->
+            Leave a thread alone when nothing changed and nobody answered. Do
+            not nag a finding that is simply still open.
 
-            Omit the line entirely when nothing is fixed. A later step resolves
-            exactly those threads and nothing else; it re-checks that each id is
-            one of your own threads on this PR before touching it.
+            Keep every reply short and in the voice `_org.md` describes. Never
+            restate your original finding -- they can read it two lines up.
+
+            Threads opened by anybody else are not in the file and are not yours
+            to touch.
+
+            Record the decisions in your summary comment, in this exact block,
+            one thread per line, each reply on a single line:
+
+                <!-- claude-threads run=${{ github.run_id }}
+                resolve <thread> :: Confirmed -- the responsive values are capped now.
+                reopen <thread> :: Still uncapped: line 42 sets 5 for the 1024 breakpoint.
+                reply <thread> :: Fair, but then the empty state needs a test.
+                -->
+
+            `<thread>` is the `thread` value from the file. Never put `-->` in a
+            reply. Omit the block entirely when no thread needs anything. A later
+            step posts each reply in its thread as you, then resolves or reopens
+            it; it checks every id is one of your own threads on this PR first.
 
             HOW TO DELIVER THE REVIEW -- this part is not optional:
 
@@ -590,20 +717,28 @@ jobs:
             Then the summary, in the shape `_org.md` defines. It carries the
             verdict and an index of the inline comments, not their content again.
 
-            A PR gets ONE summary comment, not one per review. On a first review
-            post it with `gh pr comment <n> --body "..."`. On any later review
-            REPLACE the one already there:
+            In `full` and `incremental` mode, post the summary as a NEW comment:
+
+                gh pr comment <n> --body "..."
+
+            Do not edit an old one. Editing does not move a comment to the
+            bottom or notify anyone, so a review delivered by edit is invisible:
+            someone who asked for it sees nothing happen. A later step collapses
+            your previous summaries as outdated, so only the newest stays open.
+
+            Write it whole. It describes the PR as it stands now, not a changelog
+            of your previous opinions -- what is still open, what got fixed, and
+            the current verdict.
+
+            In `threads` mode do NOT post a new summary. The answers belong in
+            the threads, where the developer is reading, and a fresh verdict for
+            every reply is noise. Instead update your existing one:
 
                 gh pr comment <n> --edit-last --body "..."
 
-            Four stacked verdicts on one PR is noise, and the reader has to work
-            out which is current. One comment that always reflects the latest
-            state does not. If `--edit-last` fails because there is nothing of
-            yours to edit, post a new comment instead.
-
-            Rewrite it whole. The replacement describes the PR as it stands now,
-            not a changelog of your previous opinions -- say what is still open,
-            what got fixed, and what the current verdict is.
+            Keep its verdict and its `claude-review-sha` line exactly as they
+            were -- the code has not changed, so neither has either of them --
+            and add the `claude-threads` block for this run.
 
             If the diff is genuinely clean, post only the summary saying so. Do not
             invent inline comments to look thorough.
@@ -713,19 +848,30 @@ jobs:
             --effort ${{ steps.profile.outputs.effort }}
             --max-turns ${{ steps.profile.outputs.max_turns }}
 
-      # Resolves the threads Claude judged fixed. Deliberately a workflow step
-      # and not a tool: the mutation runs here, with the job's token, and
-      # Claude's whole influence is a list of ids in a comment. Every id is
-      # checked against a freshly fetched set of its own unresolved threads on
-      # this PR, so the worst a prompt injection can achieve is closing a thread
-      # that should have stayed open -- which a human reopens in one click.
-      - name: Resolve threads marked fixed
-        if: steps.ctx.outputs.should_run == 'true' && steps.mode.outputs.mode != 'skip' && steps.claude.conclusion == 'success'
+      # Carries out what Claude decided about its threads: posts each reply in
+      # its thread, then resolves or reopens it. Deliberately a workflow step and
+      # not a tool -- Claude's whole influence is a block of text in its summary,
+      # and every thread id is re-checked against a freshly fetched set of its
+      # own threads on this PR before anything is written. The worst a prompt
+      # injection achieves is a wrong reply on Claude's own thread, which a
+      # human sees and answers.
+      #
+      # Only this run's block is read (`run=<id>`), so an old block in an edited
+      # summary is never acted on twice. And a thread someone else answered in
+      # the meantime -- another run, racing this one -- is left alone.
+      - name: Answer thread conversations
+        if: >-
+          always() &&
+          steps.ctx.outputs.should_run == 'true' &&
+          steps.mode.outputs.mode != 'skip'
+        continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
+          CLAUDE_TOKEN: ${{ steps.claude.outputs.github_token }}
           OWNER: ${{ github.repository_owner }}
           NAME: ${{ github.event.repository.name }}
           PR: ${{ steps.ctx.outputs.pr }}
+          RUN_ID: ${{ github.run_id }}
         run: |
           python3 << 'PYTHON_EOF'
           import json
@@ -734,26 +880,41 @@ jobs:
           import subprocess
 
           owner, name, pr = os.environ['OWNER'], os.environ['NAME'], os.environ['PR']
-
-          # REST spells an App author `claude[bot]`, GraphQL spells it `claude`.
+          run_id = os.environ['RUN_ID']
           BOT_LOGINS = {'claude', 'claude[bot]'}
 
-          def gh(args):
-              r = subprocess.run(['gh'] + args, capture_output=True, text=True)
+          # Posting as Claude, with the App token the action minted, makes the
+          # reply read as part of the conversation. If that token is not
+          # available the job token still works, but the reply shows as
+          # github-actions, so it says who it speaks for.
+          claude_token = os.environ.get('CLAUDE_TOKEN') or ''
+          token = claude_token or os.environ['GH_TOKEN']
+          prefix = '' if claude_token else '**Claude:** '
+
+          def gh(args, use=None):
+              env = {**os.environ, 'GH_TOKEN': use or os.environ['GH_TOKEN']}
+              r = subprocess.run(['gh'] + args, capture_output=True, text=True, env=env)
               return r.stdout if r.returncode == 0 else None
 
           raw = gh(['api', f'repos/{owner}/{name}/issues/{pr}/comments?per_page=100'])
-          claimed = []
+          block = None
           if raw:
               for c in json.loads(raw):
                   if (c.get('user') or {}).get('login') != 'claude[bot]':
                       continue
-                  m = re.search(r'<!--\s*claude-resolved:\s*([^>]*?)\s*-->', c.get('body') or '')
-                  if m:
-                      claimed = [i.strip() for i in m.group(1).split(',') if i.strip()]
+                  m = re.search(r'<!--\s*claude-threads\s+run=(\d+)\s*(.*?)-->',
+                                c.get('body') or '', re.S)
+                  if m and m.group(1) == run_id:
+                      block = m.group(2)
 
-          if not claimed:
-              print('Nothing claimed as fixed.')
+          if not block:
+              print('No thread decisions from this run.')
+              raise SystemExit(0)
+
+          LINE = re.compile(r'^\s*(resolve|reopen|reply)\s+(\S+)\s*::\s*(.+?)\s*$')
+          decisions = [m.groups() for m in map(LINE.match, block.splitlines()) if m]
+          if not decisions:
+              print('Decision block present but empty or malformed.')
               raise SystemExit(0)
 
           query = """
@@ -761,7 +922,8 @@ jobs:
             repository(owner:$owner,name:$name){
               pullRequest(number:$pr){
                 reviewThreads(first:100){
-                  nodes{ id isResolved comments(first:1){ nodes{ author{login} } } }
+                  nodes{ id isResolved
+                         comments(first:50){ nodes{ databaseId author{login} } } }
                 }
               }
             }
@@ -769,36 +931,139 @@ jobs:
           """
           raw = gh(['api', 'graphql', '-f', f'query={query}', '-F', f'owner={owner}',
                     '-F', f'name={name}', '-F', f'pr={pr}'])
-          allowed = set()
+          current = {}
           if raw:
               for n in json.loads(raw)['data']['repository']['pullRequest']['reviewThreads']['nodes']:
-                  first = (n.get('comments') or {}).get('nodes') or []
-                  if (not n.get('isResolved') and first
-                          and (first[0].get('author') or {}).get('login') in BOT_LOGINS):
-                      allowed.add(n['id'])
+                  cs = (n.get('comments') or {}).get('nodes') or []
+                  if cs and (cs[0].get('author') or {}).get('login') in BOT_LOGINS:
+                      current[n['id']] = {
+                          'resolved': n.get('isResolved'),
+                          'root': cs[0].get('databaseId'),
+                          'last_id': cs[-1].get('databaseId'),
+                          'last_by_bot': (cs[-1].get('author') or {}).get('login') in BOT_LOGINS,
+                      }
 
-          resolved, refused = 0, []
-          for tid in claimed:
-              if tid not in allowed:
+          try:
+              snapshot = {t['thread']: t for t in json.load(open('.claude-threads.json'))}
+          except (OSError, ValueError):
+              snapshot = {}
+
+          done = {'resolve': 0, 'reopen': 0, 'reply': 0}
+          refused, raced, failed, state_failed = [], [], [], []
+          for action, tid, text in decisions:
+              t = current.get(tid)
+              if t is None:
                   refused.append(tid)
                   continue
-              mutation = 'mutation($id:ID!){resolveReviewThread(input:{threadId:$id}){thread{isResolved}}}'
-              if gh(['api', 'graphql', '-f', f'query={mutation}', '-F', f'id={tid}']):
-                  resolved += 1
+              seen = snapshot.get(tid, {})
+              if (seen.get('awaiting_your_reply') and t['last_by_bot']
+                      and t['last_id'] != seen.get('last_comment_id')):
+                  raced.append(tid)
+                  continue
 
-          print(f'Resolved {resolved} of {len(claimed)} thread(s) claimed fixed.')
-          if refused:
-              print(f'Refused {len(refused)}: not an unresolved claude[bot] thread on this PR.')
-              for tid in refused:
-                  print(f'  {tid}')
+              posted = gh(['api', '--method', 'POST',
+                           f'repos/{owner}/{name}/pulls/{pr}/comments/{t["root"]}/replies',
+                           '-f', f'body={prefix}{text}'], use=token)
+              if posted is None:
+                  failed.append(tid)
+                  continue
+
+              # The reply is posted; now the thread state. A resolve is only
+              # counted when GitHub says the thread IS resolved afterwards --
+              # the mutation returns the new state, so read it rather than
+              # assume it. Falls back to the job token if the App token is
+              # refused, and reports a failure instead of a false success.
+              want = {'resolve': True, 'reopen': False}.get(action)
+              if want is not None and t['resolved'] != want:
+                  verb = 'resolveReviewThread' if want else 'unresolveReviewThread'
+                  q = f'query=mutation($id:ID!){{{verb}(input:{{threadId:$id}}){{thread{{isResolved}}}}}}'
+                  state = None
+                  for tok in dict.fromkeys([token, os.environ['GH_TOKEN']]):
+                      res = gh(['api', 'graphql', '-f', q, '-F', f'id={tid}'], use=tok)
+                      try:
+                          state = json.loads(res)['data'][verb]['thread']['isResolved']
+                      except (TypeError, KeyError, ValueError):
+                          state = None
+                      if state == want:
+                          break
+                  if state != want:
+                      state_failed.append(tid)
+                      continue
+              done[action] += 1
+
+          print(f"Replied and resolved {done['resolve']}, reopened {done['reopen']}, "
+                f"replied only {done['reply']}  (as {'claude' if claude_token else 'github-actions'})")
+          for label, ids in (('Refused, not your thread', refused),
+                             ('Skipped, already answered by another run', raced),
+                             ('Reply failed to post', failed),
+                             ('Replied, but could NOT change thread state', state_failed)):
+              if ids:
+                  print(f'{label}: {len(ids)}')
 
           summary = os.environ.get('GITHUB_STEP_SUMMARY')
           if summary:
               with open(summary, 'a', encoding='utf-8') as f:
-                  f.write(f'\n### Threads resolved\n\n{resolved} of {len(claimed)} claimed')
-                  if refused:
-                      f.write(f', {len(refused)} refused as not eligible')
-                  f.write('\n')
+                  f.write('\n### Thread conversations\n\n| | |\n|---|---|\n')
+                  f.write(f"| Resolved | {done['resolve']} |\n| Reopened | {done['reopen']} |\n")
+                  f.write(f"| Replied only | {done['reply']} |\n")
+                  for label, ids in (('Refused', refused), ('Raced', raced), ('Failed', failed),
+                                     ('State not changed', state_failed)):
+                      if ids:
+                          f.write(f'| {label} | {len(ids)} |\n')
+          PYTHON_EOF
+
+      # One open verdict per PR. Every full or incremental run posts its summary
+      # as a new comment -- visible, at the bottom, notifying -- and this folds
+      # the older ones away as outdated. That replaces editing a single summary
+      # in place, which kept the PR tidy but made each new review invisible.
+      - name: Collapse superseded summaries
+        if: >-
+          always() &&
+          steps.ctx.outputs.should_run == 'true' &&
+          (steps.mode.outputs.mode == 'full' || steps.mode.outputs.mode == 'incremental')
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CLAUDE_TOKEN: ${{ steps.claude.outputs.github_token }}
+          OWNER: ${{ github.repository_owner }}
+          NAME: ${{ github.event.repository.name }}
+          PR: ${{ steps.ctx.outputs.pr }}
+        run: |
+          python3 << 'PYTHON_EOF'
+          import json
+          import os
+          import subprocess
+
+          owner, name, pr = os.environ['OWNER'], os.environ['NAME'], os.environ['PR']
+          tokens = [t for t in (os.environ.get('CLAUDE_TOKEN'), os.environ['GH_TOKEN']) if t]
+
+          def gh(args, token):
+              r = subprocess.run(['gh'] + args, capture_output=True, text=True,
+                                 env={**os.environ, 'GH_TOKEN': token})
+              return r.returncode == 0, r.stdout
+
+          ok, raw = gh(['api', f'repos/{owner}/{name}/issues/{pr}/comments?per_page=100'], tokens[-1])
+          summaries = sorted(
+              (c for c in (json.loads(raw) if ok and raw else [])
+               if (c.get('user') or {}).get('login') == 'claude[bot]'
+               and 'claude-review-sha' in (c.get('body') or '')),
+              key=lambda c: c['created_at'])
+
+          if len(summaries) < 2:
+              print('Nothing to collapse.')
+              raise SystemExit(0)
+
+          mutation = ('mutation($id:ID!){minimizeComment(input:{subjectId:$id,'
+                      'classifier:OUTDATED}){minimizedComment{isMinimized}}}')
+          collapsed = 0
+          for c in summaries[:-1]:
+              for token in tokens:
+                  ok, _ = gh(['api', 'graphql', '-f', f'query={mutation}',
+                              '-F', f"id={c['node_id']}"], token)
+                  if ok:
+                      collapsed += 1
+                      break
+          print(f'Collapsed {collapsed} of {len(summaries) - 1} older summaries.')
           PYTHON_EOF
 
       # Turns, tokens and denials for every run, including failed ones -- the
