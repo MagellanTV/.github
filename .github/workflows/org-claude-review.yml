@@ -867,7 +867,6 @@ jobs:
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
-          CLAUDE_TOKEN: ${{ steps.claude.outputs.github_token }}
           OWNER: ${{ github.repository_owner }}
           NAME: ${{ github.event.repository.name }}
           PR: ${{ steps.ctx.outputs.pr }}
@@ -883,18 +882,22 @@ jobs:
           run_id = os.environ['RUN_ID']
           BOT_LOGINS = {'claude', 'claude[bot]'}
 
-          # Posting as Claude, with the App token the action minted, makes the
-          # reply read as part of the conversation. If that token is not
-          # available the job token still works, but the reply shows as
-          # github-actions, so it says who it speaks for.
-          claude_token = os.environ.get('CLAUDE_TOKEN') or ''
-          token = claude_token or os.environ['GH_TOKEN']
-          prefix = '' if claude_token else '**Claude:** '
+          # Written with the job token, so replies show as github-actions and
+          # say who they speak for. The action's own App token is no use here:
+          # its last step revokes it unconditionally, so by the time this step
+          # runs it is a real value that returns 401. That is how the first
+          # live reply failed -- non-empty, so no fallback, and dead.
+          #
+          # A side benefit: events created with the job token do not trigger
+          # workflows, so a reply posted here cannot set off another run.
+          prefix = '**Claude:** '
 
-          def gh(args, use=None):
-              env = {**os.environ, 'GH_TOKEN': use or os.environ['GH_TOKEN']}
-              r = subprocess.run(['gh'] + args, capture_output=True, text=True, env=env)
-              return r.stdout if r.returncode == 0 else None
+          def gh(args):
+              r = subprocess.run(['gh'] + args, capture_output=True, text=True)
+              if r.returncode != 0:
+                  print(f'  gh {args[1] if len(args) > 1 else ""}: {r.stderr.strip()[:200]}')
+                  return None
+              return r.stdout
 
           raw = gh(['api', f'repos/{owner}/{name}/issues/{pr}/comments?per_page=100'])
           block = None
@@ -963,7 +966,7 @@ jobs:
 
               posted = gh(['api', '--method', 'POST',
                            f'repos/{owner}/{name}/pulls/{pr}/comments/{t["root"]}/replies',
-                           '-f', f'body={prefix}{text}'], use=token)
+                           '-f', f'body={prefix}{text}'])
               if posted is None:
                   failed.append(tid)
                   continue
@@ -977,22 +980,18 @@ jobs:
               if want is not None and t['resolved'] != want:
                   verb = 'resolveReviewThread' if want else 'unresolveReviewThread'
                   q = f'query=mutation($id:ID!){{{verb}(input:{{threadId:$id}}){{thread{{isResolved}}}}}}'
-                  state = None
-                  for tok in dict.fromkeys([token, os.environ['GH_TOKEN']]):
-                      res = gh(['api', 'graphql', '-f', q, '-F', f'id={tid}'], use=tok)
-                      try:
-                          state = json.loads(res)['data'][verb]['thread']['isResolved']
-                      except (TypeError, KeyError, ValueError):
-                          state = None
-                      if state == want:
-                          break
+                  res = gh(['api', 'graphql', '-f', q, '-F', f'id={tid}'])
+                  try:
+                      state = json.loads(res)['data'][verb]['thread']['isResolved']
+                  except (TypeError, KeyError, ValueError):
+                      state = None
                   if state != want:
                       state_failed.append(tid)
                       continue
               done[action] += 1
 
           print(f"Replied and resolved {done['resolve']}, reopened {done['reopen']}, "
-                f"replied only {done['reply']}  (as {'claude' if claude_token else 'github-actions'})")
+                f"replied only {done['reply']}")
           for label, ids in (('Refused, not your thread', refused),
                              ('Skipped, already answered by another run', raced),
                              ('Reply failed to post', failed),
@@ -1024,7 +1023,6 @@ jobs:
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
-          CLAUDE_TOKEN: ${{ steps.claude.outputs.github_token }}
           OWNER: ${{ github.repository_owner }}
           NAME: ${{ github.event.repository.name }}
           PR: ${{ steps.ctx.outputs.pr }}
@@ -1035,14 +1033,14 @@ jobs:
           import subprocess
 
           owner, name, pr = os.environ['OWNER'], os.environ['NAME'], os.environ['PR']
-          tokens = [t for t in (os.environ.get('CLAUDE_TOKEN'), os.environ['GH_TOKEN']) if t]
 
-          def gh(args, token):
-              r = subprocess.run(['gh'] + args, capture_output=True, text=True,
-                                 env={**os.environ, 'GH_TOKEN': token})
+          def gh(args):
+              r = subprocess.run(['gh'] + args, capture_output=True, text=True)
+              if r.returncode != 0:
+                  print(f'  gh: {r.stderr.strip()[:200]}')
               return r.returncode == 0, r.stdout
 
-          ok, raw = gh(['api', f'repos/{owner}/{name}/issues/{pr}/comments?per_page=100'], tokens[-1])
+          ok, raw = gh(['api', f'repos/{owner}/{name}/issues/{pr}/comments?per_page=100'])
           summaries = sorted(
               (c for c in (json.loads(raw) if ok and raw else [])
                if (c.get('user') or {}).get('login') == 'claude[bot]'
@@ -1057,12 +1055,8 @@ jobs:
                       'classifier:OUTDATED}){minimizedComment{isMinimized}}}')
           collapsed = 0
           for c in summaries[:-1]:
-              for token in tokens:
-                  ok, _ = gh(['api', 'graphql', '-f', f'query={mutation}',
-                              '-F', f"id={c['node_id']}"], token)
-                  if ok:
-                      collapsed += 1
-                      break
+              ok, _ = gh(['api', 'graphql', '-f', f'query={mutation}', '-F', f"id={c['node_id']}"])
+              collapsed += ok
           print(f'Collapsed {collapsed} of {len(summaries) - 1} older summaries.')
           PYTHON_EOF
 
