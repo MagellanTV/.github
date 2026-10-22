@@ -376,6 +376,19 @@ jobs:
           # GraphQL spells a GitHub App author `claude`; REST spells it `claude[bot]`.
           BOT_LOGINS = {'claude', 'claude[bot]'}
 
+          def claude_spoke(comment):
+              # Claude's findings are posted by its App. Its replies in a thread
+              # are posted by this workflow with the job token, so they show as
+              # github-actions -- carrying the **Claude:** prefix. Missing that
+              # second case made every run read Claude's own last reply as a
+              # human's, decide someone was waiting, and answer itself again:
+              # "Confirmed", then "Confirmed again", on every push.
+              who = (comment.get('author') or {}).get('login')
+              if who in BOT_LOGINS:
+                  return True
+              return (who in ('github-actions', 'github-actions[bot]')
+                      and (comment.get('body') or '').lstrip().startswith('**Claude:**'))
+
           query = """
           query($owner:String!,$name:String!,$pr:Int!){
             repository(owner:$owner,name:$name){
@@ -409,7 +422,7 @@ jobs:
                   if (comments[0].get('author') or {}).get('login') not in BOT_LOGINS:
                       continue                      # not Claude's thread
                   last = comments[-1]
-                  human_spoke_last = (last.get('author') or {}).get('login') not in BOT_LOGINS
+                  human_spoke_last = not claude_spoke(last)
                   if n.get('isResolved') and not human_spoke_last:
                       continue                      # settled
                   awaiting += human_spoke_last
@@ -889,6 +902,15 @@ jobs:
           run_id = os.environ['RUN_ID']
           BOT_LOGINS = {'claude', 'claude[bot]'}
 
+          def claude_spoke(comment):
+              # Same rule as the collect step: the App, or this workflow speaking
+              # for it with the **Claude:** prefix.
+              who = (comment.get('author') or {}).get('login')
+              if who in BOT_LOGINS:
+                  return True
+              return (who in ('github-actions', 'github-actions[bot]')
+                      and (comment.get('body') or '').lstrip().startswith('**Claude:**'))
+
           # Written with the job token, so replies show as github-actions and
           # say who they speak for. The action's own App token is no use here:
           # its last step revokes it unconditionally, so by the time this step
@@ -933,7 +955,7 @@ jobs:
               pullRequest(number:$pr){
                 reviewThreads(first:100){
                   nodes{ id isResolved
-                         comments(first:50){ nodes{ databaseId author{login} } } }
+                         comments(first:50){ nodes{ databaseId author{login} body } } }
                 }
               }
             }
@@ -950,7 +972,7 @@ jobs:
                           'resolved': n.get('isResolved'),
                           'root': cs[0].get('databaseId'),
                           'last_id': cs[-1].get('databaseId'),
-                          'last_by_bot': (cs[-1].get('author') or {}).get('login') in BOT_LOGINS,
+                          'last_by_bot': claude_spoke(cs[-1]),
                       }
 
           try:
