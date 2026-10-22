@@ -91,6 +91,12 @@ jobs:
     name: Claude review
     runs-on: ubuntu-latest
 
+    # Handed to resolve-threads, which does what this job may not.
+    outputs:
+      pr: ${{ steps.ctx.outputs.pr }}
+      to_resolve: ${{ steps.answer.outputs.to_resolve }}
+      to_reopen: ${{ steps.answer.outputs.to_reopen }}
+
     # Four ways in: a push to the PR; the trigger phrase in any comment; or a
     # human REPLYING inside a review thread -- the developer answering one of
     # Claude's findings, which is what closes the review loop. Bots never get
@@ -860,6 +866,7 @@ jobs:
       # summary is never acted on twice. And a thread someone else answered in
       # the meantime -- another run, racing this one -- is left alone.
       - name: Answer thread conversations
+        id: answer
         if: >-
           always() &&
           steps.ctx.outputs.should_run == 'true' &&
@@ -952,7 +959,8 @@ jobs:
               snapshot = {}
 
           done = {'resolve': 0, 'reopen': 0, 'reply': 0}
-          refused, raced, failed, state_failed = [], [], [], []
+          refused, raced, failed = [], [], []
+          to_resolve, to_reopen = [], []
           for action, tid, text in decisions:
               t = current.get(tid)
               if t is None:
@@ -971,31 +979,26 @@ jobs:
                   failed.append(tid)
                   continue
 
-              # The reply is posted; now the thread state. A resolve is only
-              # counted when GitHub says the thread IS resolved afterwards --
-              # the mutation returns the new state, so read it rather than
-              # assume it. Falls back to the job token if the App token is
-              # refused, and reports a failure instead of a false success.
-              want = {'resolve': True, 'reopen': False}.get(action)
-              if want is not None and t['resolved'] != want:
-                  verb = 'resolveReviewThread' if want else 'unresolveReviewThread'
-                  q = f'query=mutation($id:ID!){{{verb}(input:{{threadId:$id}}){{thread{{isResolved}}}}}}'
-                  res = gh(['api', 'graphql', '-f', q, '-F', f'id={tid}'])
-                  try:
-                      state = json.loads(res)['data'][verb]['thread']['isResolved']
-                  except (TypeError, KeyError, ValueError):
-                      state = None
-                  if state != want:
-                      state_failed.append(tid)
-                      continue
+              # The reply is posted. Changing the thread's state is NOT done
+              # here: resolveReviewThread needs contents: write, and this job
+              # runs Claude over untrusted PR content, so it keeps
+              # contents: read. The ids go to the resolve-threads job instead,
+              # which checks nothing out and installs nothing.
+              if action == 'resolve' and not t['resolved']:
+                  to_resolve.append(tid)
+              elif action == 'reopen' and t['resolved']:
+                  to_reopen.append(tid)
               done[action] += 1
 
-          print(f"Replied and resolved {done['resolve']}, reopened {done['reopen']}, "
-                f"replied only {done['reply']}")
+          print(f"Replied: {done['resolve']} to resolve, {done['reopen']} to reopen, "
+                f"{done['reply']} reply only. State changes handed on: "
+                f"{len(to_resolve)} resolve, {len(to_reopen)} reopen.")
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+              f.write(f"to_resolve={','.join(to_resolve)}\n")
+              f.write(f"to_reopen={','.join(to_reopen)}\n")
           for label, ids in (('Refused, not your thread', refused),
                              ('Skipped, already answered by another run', raced),
-                             ('Reply failed to post', failed),
-                             ('Replied, but could NOT change thread state', state_failed)):
+                             ('Reply failed to post', failed)):
               if ids:
                   print(f'{label}: {len(ids)}')
 
@@ -1003,10 +1006,9 @@ jobs:
           if summary:
               with open(summary, 'a', encoding='utf-8') as f:
                   f.write('\n### Thread conversations\n\n| | |\n|---|---|\n')
-                  f.write(f"| Resolved | {done['resolve']} |\n| Reopened | {done['reopen']} |\n")
+                  f.write(f"| Replied, to resolve | {done['resolve']} |\n| Replied, to reopen | {done['reopen']} |\n")
                   f.write(f"| Replied only | {done['reply']} |\n")
-                  for label, ids in (('Refused', refused), ('Raced', raced), ('Failed', failed),
-                                     ('State not changed', state_failed)):
+                  for label, ids in (('Refused', refused), ('Raced', raced), ('Failed', failed)):
                       if ids:
                           f.write(f'| {label} | {len(ids)} |\n')
           PYTHON_EOF
@@ -1151,3 +1153,116 @@ jobs:
 
           emit('\n'.join(lines))
           PYTHON_EOF
+
+  # resolveReviewThread and unresolveReviewThread need contents: write on the
+  # job token -- pull-requests: write is enough to reply in a thread but not to
+  # resolve it, which failed live as "Resource not accessible by integration".
+  #
+  # That permission lives here and nowhere else. The review job runs Claude
+  # over untrusted PR content and keeps contents: read; this job checks
+  # nothing out, installs nothing, runs no model, and only acts on ids that
+  # look like review threads and belong to Claude on this PR.
+  #
+  # It declares NO permissions on purpose: it inherits the caller's grant. A
+  # called workflow cannot ask for more than its caller gives, so declaring
+  # contents: write would be a startup_failure in every repository whose
+  # caller has not been updated yet. Inheriting instead means it warns there
+  # and works everywhere else.
+  resolve-threads:
+    name: Resolve threads
+    needs: review
+    if: >-
+      always() &&
+      (needs.review.outputs.to_resolve != '' || needs.review.outputs.to_reopen != '')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve and reopen
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OWNER: ${{ github.repository_owner }}
+          NAME: ${{ github.event.repository.name }}
+          PR: ${{ needs.review.outputs.pr }}
+          TO_RESOLVE: ${{ needs.review.outputs.to_resolve }}
+          TO_REOPEN: ${{ needs.review.outputs.to_reopen }}
+        run: |
+          python3 << 'PYTHON_EOF'
+          import json
+          import os
+          import re
+          import subprocess
+
+          owner, name, pr = os.environ['OWNER'], os.environ['NAME'], os.environ['PR']
+          BOT_LOGINS = {'claude', 'claude[bot]'}
+          THREAD_ID = re.compile(r'^PRRT_[A-Za-z0-9_-]+$')
+
+          def ids(var):
+              return [i for i in (os.environ.get(var) or '').split(',') if THREAD_ID.match(i)]
+
+          def gh(args):
+              r = subprocess.run(['gh'] + args, capture_output=True, text=True)
+              return (r.stdout if r.returncode == 0 else None), r.stderr.strip()
+
+          # Re-checked here rather than trusted from the previous job: only
+          # Claude's own threads on this PR are touched.
+          query = """
+          query($owner:String!,$name:String!,$pr:Int!){
+            repository(owner:$owner,name:$name){
+              pullRequest(number:$pr){
+                reviewThreads(first:100){
+                  nodes{ id comments(first:1){ nodes{ author{login} } } }
+                }
+              }
+            }
+          }
+          """
+          raw, _ = gh(['api', 'graphql', '-f', f'query={query}', '-F', f'owner={owner}',
+                       '-F', f'name={name}', '-F', f'pr={pr}'])
+          mine = set()
+          if raw:
+              for n in json.loads(raw)['data']['repository']['pullRequest']['reviewThreads']['nodes']:
+                  cs = (n.get('comments') or {}).get('nodes') or []
+                  if cs and (cs[0].get('author') or {}).get('login') in BOT_LOGINS:
+                      mine.add(n['id'])
+
+          results = {'resolved': 0, 'reopened': 0, 'refused': 0, 'failed': 0}
+          denied = False
+          for verb, want, key, tids in (('resolveReviewThread', True, 'resolved', ids('TO_RESOLVE')),
+                                        ('unresolveReviewThread', False, 'reopened', ids('TO_REOPEN'))):
+              q = f'query=mutation($id:ID!){{{verb}(input:{{threadId:$id}}){{thread{{isResolved}}}}}}'
+              for tid in tids:
+                  if tid not in mine:
+                      results['refused'] += 1
+                      continue
+                  out, err = gh(['api', 'graphql', '-f', q, '-F', f'id={tid}'])
+                  try:
+                      state = json.loads(out)['data'][verb]['thread']['isResolved']
+                  except (TypeError, KeyError, ValueError):
+                      state = None
+                  # Counted only when GitHub reports the state actually changed.
+                  if state == want:
+                      results[key] += 1
+                  else:
+                      results['failed'] += 1
+                      denied = denied or 'not accessible' in err.lower() or 'forbidden' in err.lower()
+                      print(f'  {verb} {tid}: {err[:160]}')
+
+          print(f"Resolved {results['resolved']}, reopened {results['reopened']}, "
+                f"refused {results['refused']}, failed {results['failed']}.")
+
+          if denied:
+              print('::warning::Thread state could not be changed: this job inherits the '
+                    "caller's permissions, and resolving a review thread needs "
+                    'contents: write. Update this repository\'s claude-review.yml to the '
+                    'current caller template in MagellanTV/.github.')
+
+          summary = os.environ.get('GITHUB_STEP_SUMMARY')
+          if summary:
+              with open(summary, 'a', encoding='utf-8') as f:
+                  f.write('### Thread state\n\n| | |\n|---|---|\n')
+                  for k, v in results.items():
+                      f.write(f'| {k.capitalize()} | {v} |\n')
+                  if denied:
+                      f.write('\n> Refused for lack of `contents: write`. '
+                              'This repository needs the current caller template.\n')
+          PYTHON_EOF
+
