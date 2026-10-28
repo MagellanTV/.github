@@ -186,7 +186,15 @@ Both are written out in `rulesets/`, derived from what `smart-tv` already runs:
 |---|---|
 | `rulesets/org-branch-naming.json` | Restrict creations on `~ALL` except `feature/*`, `fix/*`, `hotfix/*`, `release/*` and the default-branch names in use (`main`, `master`, `develop`, `legacy`, `legacy-develop`) |
 | `rulesets/org-pr-approvals.json` | On `~DEFAULT_BRANCH`: restrict deletions, block force pushes, require a PR with 1 approval, code-owner review, last-push approval and thread resolution |
-| `rulesets/org-release-protection.json` | The same rules on `refs/heads/release/*`. Release branches had no protection at all, so a hotfix could be pushed straight in and reach the default branch unreviewed when the release merged |
+| `rulesets/org-release-protection.json` | On `refs/heads/release/*`: restrict deletions and block force pushes. No pull request is required, so anyone with write access can push to a release branch directly (see below) |
+
+**Why release branches do not require a pull request.** They used to carry the
+same pull request rule as the default branch. GitHub's **Update branch** button
+pushes a merge commit straight to the PR's head branch, and the ruleset cannot
+tell that push apart from any other direct push. So on a `release/x` → `master`
+PR, nobody without bypass could bring the release up to date with its base.
+The pull request rule was dropped so that button works. The review gate is still
+the PR from the release into the default branch, which `PR Approvals` covers.
 
 Two ways to apply them:
 
@@ -209,6 +217,7 @@ including this one.
 |---|---|
 | Branch Naming Convention | Nobody |
 | PR Approvals | Organization admins, and repository role 5 (admin) |
+| Release Branch Protection | Organization admins, and repository role 5 (admin) |
 
 `actor_id` is `null` on the `OrganizationAdmin` entry on purpose — GitHub's
 schema says it is ignored for that actor type, and this is the shape the API
