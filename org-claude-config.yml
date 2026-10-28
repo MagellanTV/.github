@@ -101,3 +101,17 @@ projects:
   magellantv-app-config:
     platform: tooling
     description: "Remote app configuration"
+
+  # --- QA automation ---------------------------------------------------------
+
+  magellantv-automation:
+    platform: tooling
+    description: "QA end-to-end suite - Java, Selenium and TestNG on BrowserStack"
+
+  magellantv-automation-tb:
+    platform: tooling
+    description: "QA mobile suite on TestingBot - Java and TestNG for Android, iOS and tvOS"
+
+  magellantv-automation-bs:
+    platform: tooling
+    description: "QA mobile suite on BrowserStack - Java and TestNG for Android and iOS"
