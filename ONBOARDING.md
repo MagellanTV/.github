@@ -185,8 +185,15 @@ Both are written out in `rulesets/`, derived from what `smart-tv` already runs:
 | File | What it does |
 |---|---|
 | `rulesets/org-branch-naming.json` | Restrict creations on `~ALL` except `feature/*`, `fix/*`, `hotfix/*`, `release/*` and the default-branch names in use (`main`, `master`, `develop`, `legacy`, `legacy-develop`) |
-| `rulesets/org-pr-approvals.json` | On `~DEFAULT_BRANCH`: restrict deletions, block force pushes, require a PR with 1 approval, code-owner review, last-push approval and thread resolution |
+| `rulesets/org-pr-approvals.json` | On `~DEFAULT_BRANCH`, `main` and `master`: restrict deletions, block force pushes, require a PR with 1 approval, code-owner review, last-push approval and thread resolution. Merge, squash and rebase are all allowed |
 | `rulesets/org-release-protection.json` | On `refs/heads/release/*`: restrict deletions and block force pushes. No pull request is required, so anyone with write access can push to a release branch directly (see below) |
+| `rulesets/org-develop-protection.json` | On `refs/heads/develop`: restrict deletions and block force pushes. Direct pushes are allowed. Where `develop` is the default branch, `PR Approvals` applies as well |
+| `rulesets/org-config-repo-admins-only.json` | `.github` only: nobody but organization owners can create, update or delete a branch |
+
+`.github` is excluded from the other four. It holds the workflows, rulesets and
+config every repository depends on, so only organization owners change it.
+While the base permission is `write`, a ruleset is the only way to enforce that,
+because a repository cannot grant less than the base permission.
 
 **Why release branches do not require a pull request.** They used to carry the
 same pull request rule as the default branch. GitHub's **Update branch** button
@@ -208,8 +215,8 @@ updates by ruleset name so rerunning is safe. It needs `admin:org`
 organization administration — members, teams, webhooks, org secrets — not just
 rulesets. Worth weighing against five minutes in the UI.
 
-**No repository is excluded.** Both rules apply to every repository in the org,
-including this one.
+**Only `.github` is excluded.** Every other repository in the org gets the
+same rulesets, and no repository keeps rulesets of its own.
 
 **Who can bypass**, mirroring `smart-tv`:
 
@@ -218,6 +225,12 @@ including this one.
 | Branch Naming Convention | Nobody |
 | PR Approvals | Organization admins, and repository role 5 (admin) |
 | Release Branch Protection | Organization admins, and repository role 5 (admin) |
+| Develop Branch Protection | Organization admins, and repository role 5 (admin) |
+| Org Config Repo Admins Only | Organization admins |
+
+Apart from the owners, the only repository admin today is `miguelmagellantv`,
+on the three QA automation repositories, so he can merge there without an
+approval.
 
 `actor_id` is `null` on the `OrganizationAdmin` entry on purpose — GitHub's
 schema says it is ignored for that actor type, and this is the shape the API
