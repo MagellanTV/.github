@@ -82,6 +82,15 @@ DRY_RUN=1 ./scripts/rollout-claude-review.sh <repo>   # preview
 It branches as `feature/claude-pr-review` because several repositories reject
 any other prefix (see §6).
 
+Every repository also runs the labeler. `scripts/rollout-pr-workflows.sh` adds
+both workflows in one PR, from `claude-review.caller.yml` and
+`labeler.caller.yml`, and takes `<repo>@<branch>` for a branch other than the
+default:
+
+```bash
+DRY_RUN=1 ./scripts/rollout-pr-workflows.sh <repo> <repo>@develop
+```
+
 **Keep the caller identical to the template.** All the tuning lives in this
 repository, and a caller that drifts from the template is a caller that will
 confuse whoever debugs it next.
