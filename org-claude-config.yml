@@ -73,6 +73,38 @@ projects:
     platform: android
     description: "Kotlin Multiplatform analytics library - ships into both the Android and Apple apps"
 
+  smartv-v2:
+    platform: smarttv
+    description: "Smart TV app, second generation"
+
+  samsung-tizen:
+    platform: smarttv
+    description: "Samsung Tizen app"
+
+  analytics:
+    platform: web
+    description: "Analytics npm package (@magellantv/analytics), used by web and smart-tv"
+
+  offerset_cms_ux-poc:
+    platform: web
+    description: "Proof of concept for the offer set CMS UX"
+
+  magellantv-apple-services:
+    platform: apple
+    description: "Swift package shared by the Apple apps: services"
+
+  magellantv-apple-models:
+    platform: apple
+    description: "Swift package shared by the Apple apps: models"
+
+  magellantv-apple-videoplayer:
+    platform: apple
+    description: "Swift package shared by the Apple apps: video player"
+
+  magellan-apple-storage:
+    platform: apple
+    description: "Swift package shared by the Apple apps: storage"
+
   # --- Services --------------------------------------------------------------
 
   magellantv-backend:
@@ -88,19 +120,45 @@ projects:
     platform: backend
     description: "Aspera transfer sync service"
 
+  magellantv-devops:
+    platform: backend
+    description: "Infrastructure as code (Terraform) and operations"
+
+  # --- Data and product ------------------------------------------------------
+
+  analytics_dataform_pipeline:
+    platform: backend
+    description: "Dataform pipeline on GCP: analytics models and recommendations"
+
+  aws-personalize-workflow:
+    platform: backend
+    description: "AWS Personalize recommendation workflow"
+
+  core_content_vectors:
+    platform: backend
+    description: "Content embeddings and vector search"
+
+  credible-sbg-ltv:
+    platform: tooling
+    description: "LTV analysis"
+
+  mgtv-engagement-sim:
+    platform: tooling
+    description: "Engagement simulation notebooks"
+
   # --- Tooling and configuration ---------------------------------------------
 
   workticket:
     platform: tooling
     description: "Ticket-to-PR workflow tooling"
 
+  product-workflow:
+    platform: tooling
+    description: "Development flow for the product team"
+
   FM_.xlsx_to_JSON:
     platform: tooling
     description: "FAST schedule converter - spreadsheet to JSON"
-
-  magellantv-app-config:
-    platform: tooling
-    description: "Remote app configuration"
 
   # --- QA automation ---------------------------------------------------------
 

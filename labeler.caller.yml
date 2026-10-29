@@ -1,0 +1,47 @@
+# ============================================================================
+# LABELER WORKFLOW
+# ============================================================================
+# This workflow automatically labels PRs based on files changed.
+# Configuration is centralized in MagellanTV/.github/labeler.yml
+#
+# Location: .github/workflows/labeler.yml
+# 
+# To add this to your project:
+# 1. Copy this file to: .github/workflows/labeler.yml
+# 2. That's it! The labeler.yml config is in MagellanTV/.github
+# ============================================================================
+
+name: Pull Request Labeler
+
+on:
+  pull_request_target:
+    types: [opened, synchronize]
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+jobs:
+  labeler:
+    runs-on: ubuntu-latest
+    steps:
+      # Checkout the organization .github repo to get labeler.yml
+      - name: Checkout organization config
+        uses: actions/checkout@v4
+        with:
+          repository: MagellanTV/.github
+          path: .github-org
+      
+      # Copy labeler.yml to expected location
+      - name: Setup labeler config
+        run: |
+          mkdir -p .github
+          cp .github-org/org-labeler.yml .github/labeler.yml
+      
+      # Run labeler
+      - uses: actions/labeler@v6
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          configuration-path: .github/labeler.yml
+          sync-labels: true
