@@ -79,6 +79,21 @@ for target in "$@"; do
   fi
 
   files="$(for p in "${needed[@]}"; do echo "${p#*:}"; done)"
+  has_review=0; has_labeler=0
+  echo "$files" | grep -q 'claude-review.yml' && has_review=1
+  echo "$files" | grep -q 'labeler.yml' && has_labeler=1
+  if [ $has_review = 1 ] && [ $has_labeler = 1 ]; then
+    what="PR review and labeler workflows"
+  elif [ $has_review = 1 ]; then
+    what="PR review workflow"
+  else
+    what="labeler workflow"
+  fi
+  note=""
+  [ $has_review = 1 ] && note="
+
+This PR adds or changes the review workflow, so the review skips this PR: the workflow file differs from the base branch. It runs from the next PR after this one is merged."
+
   if [ "$DRY_RUN" = "1" ]; then
     echo "    dry run: would open $branch -> $base with:"
     echo "$files" | sed 's/^/      /'
@@ -92,23 +107,21 @@ for target in "$@"; do
     git checkout -q -b "$branch"
     mkdir -p .github/workflows
     for p in "${needed[@]}"; do cp "$here/${p%%:*}" "${p#*:}"; git add "${p#*:}"; done
-    git commit -q -m "ci: add the organization PR review and labeler workflows
+    git commit -q -m "ci: add the organization $what
 
-Both workflows call into MagellanTV/.github, where their configuration
-lives. Copied unchanged from the templates there."
+Calls into MagellanTV/.github, where the configuration lives. Copied
+unchanged from the template there."
     git push -q -u origin "$branch"
     gh pr create \
       --repo "$ORG/$repo" \
       --head "$branch" \
       --base "$base" \
-      --title "ci: add the organization PR review and labeler workflows" \
+      --title "ci: add the organization $what" \
       --body "Adds or updates the workflows every MagellanTV repository runs on pull requests:
 
 $(echo "$files" | sed 's/^/- `/; s/$/`/')
 
-Both are copied unchanged from the templates in [MagellanTV/.github](https://github.com/MagellanTV/.github), which holds the review configuration and the shared label rules.
-
-If this PR adds or changes the review workflow, the review skips this PR, because the workflow file differs from the base branch. It runs from the next PR after this one is merged."
+Copied unchanged from the templates in [MagellanTV/.github](https://github.com/MagellanTV/.github), which holds the review configuration and the shared label rules.$note"
   )
   echo "    PR opened"
 done
