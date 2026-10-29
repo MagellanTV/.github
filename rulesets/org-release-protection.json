@@ -5,7 +5,7 @@
   "conditions": {
     "repository_name": {
       "include": ["~ALL"],
-      "exclude": []
+      "exclude": [".github"]
     },
     "ref_name": {
       "include": ["refs/heads/release/*"],
