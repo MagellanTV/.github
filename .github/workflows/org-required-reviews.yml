@@ -51,10 +51,10 @@ jobs:
           
           # Get projects dict first
           projects = mapping.get('projects', {})
-          project = projects.get('$PROJECT_NAME')
-          
+          project = projects.get('$PROJECT_NAME') or projects.get('default')
+
           if not project:
-              print(f"No configuration found for: $PROJECT_NAME")
+              print(f"No configuration found for: $PROJECT_NAME, and no default entry")
               exit(1)
           
           teams = project.get('teams', [])

@@ -1,51 +1,41 @@
 projects:
   magellantv-web:
-    teams: 
-      - web-team
-      - tech-leads
-      - test-team
+    teams:
+      - developers
     description: "Website"
-  
+
   magellantv-android:
-    teams: 
-      - android-team
-      - tech-leads
-      - test-team
+    teams:
+      - developers
     description: "Android App"
 
   magellantv_roku:
-    teams: 
-      - roku-team
-      - test-team
+    teams:
+      - developers
     description: "Roku App"
-  
+
   smart-tv:
     teams:
-      - smarttv-team
-      - tech-leads
-      - test-team
+      - developers
     description: "Smart TV App"
-  
-  magellantv-appletv:
+
+  apple-tv:
     teams:
-      - apple-team
-      - tech-leads
-      - test-team
+      - developers
     description: "Apple TV App"
-  
+
   cms-frontend:
     teams:
-      - web-team
-      - tech-leads
-      - test-team
+      - developers
     description: "CMS frontend"
 
   magellantv-backend:
     teams:
-      - tech-leads
+      - developers
     description: "Backend Services"
-  
+
+  # Used for any repository without its own entry
   default:
-    teams: 
-      - tech-leads
+    teams:
+      - developers
     description: "Default Reviewers"

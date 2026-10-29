@@ -142,7 +142,9 @@ secrets to them.
 
 `org-required-reviews.yml` reads `org-team-mapping.yml`, requires an approval
 from each mapped team, assigns the PR to its author, and requests a reviewer
-from each team. Consumer repositories call it from
+from each team. A repository without its own entry uses `default`. The org has
+two teams, `developers` and `product`, and every mapped project currently asks
+for one approval from `developers`. Consumer repositories call it from
 `.github/workflows/required-reviews.yml` and pass `REQUIRED_REVIEWS_TOKEN`.
 
 ## Labeling
