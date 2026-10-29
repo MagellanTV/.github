@@ -198,6 +198,7 @@ Both are written out in `rulesets/`, derived from what `smart-tv` already runs:
 | `rulesets/org-release-protection.json` | On `refs/heads/release/*`: restrict deletions and block force pushes. No pull request is required, so anyone with write access can push to a release branch directly (see below) |
 | `rulesets/org-develop-protection.json` | On `refs/heads/develop`: restrict deletions and block force pushes. Direct pushes are allowed. Where `develop` is the default branch, `PR Approvals` applies as well |
 | `rulesets/org-config-repo-admins-only.json` | `.github` only: nobody but organization owners can create, update or delete a branch |
+| `rulesets/org-required-tests.json` | On `~DEFAULT_BRANCH`, `main` and `master` of the listed repositories: a `tests` check from GitHub Actions must pass. A repository goes on the list only after its `.github/workflows/tests.yml` has run green, since a required check that never passes blocks every PR |
 
 `.github` is excluded from the other four. It holds the workflows, rulesets and
 config every repository depends on, so only organization owners change it.
@@ -236,6 +237,7 @@ same rulesets, and no repository keeps rulesets of its own.
 | Release Branch Protection | Organization admins, and repository role 5 (admin) |
 | Develop Branch Protection | Organization admins, and repository role 5 (admin) |
 | Org Config Repo Admins Only | Organization admins |
+| Required Tests | Organization admins, and repository role 5 (admin) |
 
 Apart from the owners, the only repository admin today is `miguelmagellantv`,
 on the three QA automation repositories, so he can merge there without an

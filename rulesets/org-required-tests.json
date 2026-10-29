@@ -1,0 +1,41 @@
+{
+  "name": "Required Tests",
+  "target": "branch",
+  "enforcement": "active",
+  "conditions": {
+    "repository_name": {
+      "include": [
+        "analytics",
+        "analytics_dataform_pipeline",
+        "cms-frontend",
+        "mgtv-engagement-sim",
+        "workticket"
+      ],
+      "exclude": []
+    },
+    "ref_name": {
+      "include": [
+        "~DEFAULT_BRANCH",
+        "refs/heads/main",
+        "refs/heads/master"
+      ],
+      "exclude": []
+    }
+  },
+  "rules": [
+    {
+      "type": "required_status_checks",
+      "parameters": {
+        "strict_required_status_checks_policy": false,
+        "do_not_enforce_on_create": true,
+        "required_status_checks": [
+          { "context": "tests", "integration_id": 15368 }
+        ]
+      }
+    }
+  ],
+  "bypass_actors": [
+    { "actor_id": null, "actor_type": "OrganizationAdmin", "bypass_mode": "always" },
+    { "actor_id": 5, "actor_type": "RepositoryRole", "bypass_mode": "always" }
+  ]
+}
