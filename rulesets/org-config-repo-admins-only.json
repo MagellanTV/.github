@@ -19,8 +19,7 @@
   "rules": [
     { "type": "creation" },
     { "type": "update" },
-    { "type": "deletion" },
-    { "type": "non_fast_forward" }
+    { "type": "deletion" }
   ],
   "bypass_actors": [
     { "actor_id": null, "actor_type": "OrganizationAdmin", "bypass_mode": "always" }
